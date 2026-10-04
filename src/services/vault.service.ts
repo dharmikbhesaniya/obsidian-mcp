@@ -222,7 +222,12 @@ export class VaultService {
     };
   }
 
-  public async listFiles(folder?: string, recursive: boolean = false, vaultName?: string) {
+  public async listFiles(
+    folder?: string,
+    recursive: boolean = false,
+    vaultName?: string,
+    extension?: string
+  ) {
     const vault = this.resolveVault(vaultName);
     const target = folder ? vault.pathGuard.resolveSafePath(folder).absolutePath : vault.pathGuard.getVaultRoot();
     if (!fs.existsSync(target)) {
@@ -231,6 +236,11 @@ export class VaultService {
 
     const files: Array<{ path: string; type: "file" | "folder" }> = [];
     const root = vault.pathGuard.getVaultRoot();
+    const cleanExt = extension
+      ? extension.startsWith(".")
+        ? extension.slice(1).toLowerCase()
+        : extension.toLowerCase()
+      : null;
 
     const walk = (dir: string) => {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -239,16 +249,20 @@ export class VaultService {
         const fullPath = path.join(dir, entry.name);
         const relPath = path.relative(root, fullPath);
         if (entry.isDirectory()) {
-          files.push({ path: relPath, type: "folder" });
+          if (!cleanExt) {
+            files.push({ path: relPath, type: "folder" });
+          }
           if (recursive) walk(fullPath);
         } else {
-          files.push({ path: relPath, type: "file" });
+          if (!cleanExt || entry.name.toLowerCase().endsWith(`.${cleanExt}`)) {
+            files.push({ path: relPath, type: "file" });
+          }
         }
       }
     };
 
     walk(target);
-    return { files };
+    return { files, totalFiles: files.length };
   }
 
   public async getFileInfo(targetPath: string, vaultName?: string) {

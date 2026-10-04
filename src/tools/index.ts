@@ -99,7 +99,9 @@ export function registerTools(
       description: "Lists files and subdirectories under a vault folder",
       inputSchema: Schemas.ListFilesSchema.shape,
     },
-    wrapHandler("obsidian_list_files", (args) => vaultService.listFiles(args.folder, args.recursive, args.vault))
+    wrapHandler("obsidian_list_files", (args) =>
+      vaultService.listFiles(args.folder, args.recursive, args.vault, args.extension)
+    )
   );
   server.registerTool(
     "obsidian_get_file_info",

@@ -14,6 +14,7 @@ export const GetVaultSchema = z.object({
 export const ListFilesSchema = z.object({
   folder: VaultRelativePathSchema.optional(),
   recursive: z.boolean().default(false),
+  extension: z.string().optional().describe("Filter files by extension without leading dot (e.g. 'md', 'canvas', 'png')"),
   vault: VaultNameSchema,
 });
 export const GetFileInfoSchema = z.object({

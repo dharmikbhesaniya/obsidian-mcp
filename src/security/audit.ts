@@ -4,6 +4,7 @@ export interface AuditRecord {
   clientId: string;
   tool: string;
   path?: string;
+  vault?: string;
   status: "success" | "error";
   durationMs: number;
   errorCode?: string;

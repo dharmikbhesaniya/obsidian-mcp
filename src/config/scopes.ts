@@ -17,6 +17,7 @@ export type ScopeType = (typeof Scope)[keyof typeof Scope];
  */
 export const TOOL_SCOPES: Record<string, ScopeType> = {
   // Vault domain
+  obsidian_list_vaults: Scope.VAULT_READ,
   obsidian_get_vault: Scope.VAULT_READ,
   obsidian_list_files: Scope.VAULT_READ,
   obsidian_get_file_info: Scope.VAULT_READ,

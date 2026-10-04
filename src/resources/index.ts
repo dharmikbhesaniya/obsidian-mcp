@@ -2,11 +2,24 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import { VaultService } from "../services/vault.service.js";
 
 export function registerResources(server: McpServer, vaultService: VaultService) {
+  // 0. obsidian://vaults
+  server.registerResource(
+    "vaults-list",
+    "obsidian://vaults",
+    { description: "List of all configured Obsidian vaults and active default", mimeType: "application/json" },
+    async (uri) => {
+      const data = await vaultService.listVaults();
+      return {
+        contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(data, null, 2) }],
+      };
+    }
+  );
+
   // 1. obsidian://vault
   server.registerResource(
     "vault-info",
     "obsidian://vault",
-    { description: "General vault metadata, file counts, and connectivity status", mimeType: "application/json" },
+    { description: "General vault metadata, file counts, and connectivity status for default vault", mimeType: "application/json" },
     async (uri) => {
       const data = await vaultService.getVault();
       return {

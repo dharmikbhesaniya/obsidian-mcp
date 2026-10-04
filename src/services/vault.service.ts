@@ -35,30 +35,167 @@ export function stripObsidianComments(content: string): string {
   return content.replace(/%%[\s\S]*?%%/g, "");
 }
 
+export interface VaultInstance {
+  name: string;
+  root: string;
+  pathGuard: PathGuard;
+  trashManager: TrashManager;
+  isDefault: boolean;
+}
+
 export class VaultService {
-  private readonly pathGuard: PathGuard;
+  private readonly vaults: Map<string, VaultInstance> = new Map();
+  private defaultVaultName: string = "default";
   private readonly cliAdapter: ObsidianCliAdapter;
-  private readonly trashManager: TrashManager;
 
-  constructor(pathGuard: PathGuard, cliAdapter: ObsidianCliAdapter, trashManager?: TrashManager) {
-    this.pathGuard = pathGuard;
+  constructor(
+    vaultsOrPathGuard: PathGuard | Record<string, string> | Map<string, string>,
+    cliAdapter: ObsidianCliAdapter,
+    trashManager?: TrashManager,
+    defaultVault?: string
+  ) {
     this.cliAdapter = cliAdapter;
-    this.trashManager = trashManager ?? new TrashManager(pathGuard.getVaultRoot());
+
+    if (vaultsOrPathGuard instanceof PathGuard) {
+      const root = vaultsOrPathGuard.getVaultRoot();
+      const name = defaultVault || path.basename(root) || "default";
+      const tm = trashManager ?? new TrashManager(root);
+      this.defaultVaultName = name;
+      const instance: VaultInstance = {
+        name,
+        root,
+        pathGuard: vaultsOrPathGuard,
+        trashManager: tm,
+        isDefault: true,
+      };
+      this.vaults.set(name, instance);
+      if (name !== "default") {
+        this.vaults.set("default", instance);
+      }
+    } else {
+      const entries =
+        vaultsOrPathGuard instanceof Map
+          ? Array.from(vaultsOrPathGuard.entries())
+          : Object.entries(vaultsOrPathGuard);
+
+      if (entries.length === 0) {
+        throw new Error("At least one vault must be configured.");
+      }
+
+      this.defaultVaultName = defaultVault || entries[0][0];
+
+      for (const [name, vaultPath] of entries) {
+        const resolvedPath = path.resolve(vaultPath);
+        const pg = new PathGuard(resolvedPath);
+        const tm = new TrashManager(resolvedPath);
+        const isDef = name === this.defaultVaultName;
+        this.vaults.set(name, {
+          name,
+          root: resolvedPath,
+          pathGuard: pg,
+          trashManager: tm,
+          isDefault: isDef,
+        });
+      }
+
+      if (!this.vaults.has("default") && this.vaults.has(this.defaultVaultName)) {
+        this.vaults.set("default", this.vaults.get(this.defaultVaultName)!);
+      }
+    }
   }
 
-  public getTrashManager(): TrashManager {
-    return this.trashManager;
+  public resolveVault(vaultName?: string): VaultInstance {
+    if (!vaultName || vaultName.trim() === "") {
+      const def = this.vaults.get(this.defaultVaultName) || this.vaults.get("default");
+      if (!def) {
+        throw new ObsidianMcpError(ErrorCode.NOT_FOUND, "No default vault configured", 404);
+      }
+      return def;
+    }
+
+    const trimmed = vaultName.trim();
+    const vault = this.vaults.get(trimmed);
+    if (!vault) {
+      const available = Array.from(new Set(this.vaults.keys())).join(", ");
+      throw new ObsidianMcpError(
+        ErrorCode.NOT_FOUND,
+        `Vault '${trimmed}' not found. Available vaults: [${available}]`,
+        404
+      );
+    }
+    return vault;
   }
 
-  public getObsidianUri(relativePath: string): string {
-    const vaultName = path.basename(this.pathGuard.getVaultRoot());
-    return `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(relativePath)}`;
+  public get pathGuard(): PathGuard {
+    return this.resolveVault().pathGuard;
+  }
+
+  public get trashManager(): TrashManager {
+    return this.resolveVault().trashManager;
+  }
+
+  public getPathGuard(vaultName?: string): PathGuard {
+    return this.resolveVault(vaultName).pathGuard;
+  }
+
+  public getTrashManager(vaultName?: string): TrashManager {
+    return this.resolveVault(vaultName).trashManager;
+  }
+
+  public getObsidianUri(relativePath: string, vaultName?: string): string {
+    const vault = this.resolveVault(vaultName);
+    return `obsidian://open?vault=${encodeURIComponent(vault.name)}&file=${encodeURIComponent(relativePath)}`;
   }
 
   // --- VAULT DOMAIN ---
 
-  public async getVault() {
-    const root = this.pathGuard.getVaultRoot();
+  public async listVaults() {
+    const list: Array<{ name: string; path: string; isDefault: boolean; totalFiles: number }> = [];
+    const seenNames = new Set<string>();
+
+    for (const [name, instance] of this.vaults.entries()) {
+      if (name === "default" && this.vaults.size > 1 && instance.name !== "default") {
+        continue;
+      }
+      if (seenNames.has(instance.name)) continue;
+      seenNames.add(instance.name);
+
+      let totalFiles = 0;
+      try {
+        const walk = (dir: string) => {
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.name.startsWith(".")) continue;
+            if (entry.isDirectory()) {
+              walk(path.join(dir, entry.name));
+            } else {
+              totalFiles++;
+            }
+          }
+        };
+        walk(instance.root);
+      } catch {
+        // Fallback
+      }
+
+      list.push({
+        name: instance.name,
+        path: instance.root,
+        isDefault: instance.name === this.defaultVaultName,
+        totalFiles,
+      });
+    }
+
+    return {
+      defaultVault: this.defaultVaultName,
+      totalVaults: list.length,
+      vaults: list,
+    };
+  }
+
+  public async getVault(vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const root = vault.pathGuard.getVaultRoot();
     let totalFiles = 0;
     try {
       const walk = (dir: string) => {
@@ -80,8 +217,10 @@ export class VaultService {
     const cliReachable = await this.cliAdapter.checkReachability();
 
     return {
-      vaultId: path.basename(root),
-      name: path.basename(root),
+      vaultId: vault.name,
+      name: vault.name,
+      path: root,
+      isDefault: vault.name === this.defaultVaultName,
       status: cliReachable ? "connected" : "degraded",
       vaultAccessible: true,
       obsidianCli: cliReachable ? "connected" : "unavailable",
@@ -89,14 +228,15 @@ export class VaultService {
     };
   }
 
-  public async listFiles(folder?: string, recursive: boolean = false) {
-    const target = folder ? this.pathGuard.resolveSafePath(folder).absolutePath : this.pathGuard.getVaultRoot();
+  public async listFiles(folder?: string, recursive: boolean = false, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const target = folder ? vault.pathGuard.resolveSafePath(folder).absolutePath : vault.pathGuard.getVaultRoot();
     if (!fs.existsSync(target)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Directory '${folder || ""}' not found`, 404);
     }
 
     const files: Array<{ path: string; type: "file" | "folder" }> = [];
-    const root = this.pathGuard.getVaultRoot();
+    const root = vault.pathGuard.getVaultRoot();
 
     const walk = (dir: string) => {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -117,8 +257,9 @@ export class VaultService {
     return { files };
   }
 
-  public async getFileInfo(targetPath: string) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+  public async getFileInfo(targetPath: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `File '${relativePath}' not found`, 404);
     }
@@ -134,8 +275,9 @@ export class VaultService {
 
   // --- NOTES DOMAIN ---
 
-  public async readNote(targetPath: string, stripComments: boolean = false) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+  public async readNote(targetPath: string, stripComments: boolean = false, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
@@ -151,7 +293,7 @@ export class VaultService {
       revision,
       etag: revision,
       frontmatter: parsed.frontmatter,
-      obsidianUri: this.getObsidianUri(relativePath),
+      obsidianUri: this.getObsidianUri(relativePath, vault.name),
     };
   }
 
@@ -160,9 +302,11 @@ export class VaultService {
     content: string = "",
     template?: string,
     overwrite: boolean = false,
-    expectedRevision?: string
+    expectedRevision?: string,
+    vaultName?: string
   ) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
     if (fs.existsSync(absolutePath)) {
       if (!overwrite) {
         throw new ObsidianMcpError(
@@ -198,7 +342,7 @@ export class VaultService {
 
     // If template specified, CLI execution is required
     if (template) {
-      const args = [`path=${relativePath}`, "silent", `template=${template}`];
+      const args = [`vault=${vault.name}`, `path=${relativePath}`, "silent", `template=${template}`];
       await this.cliAdapter.execute("create", args);
       if (content) {
         AtomicFs.writeFileSync(absolutePath, content, "utf-8");
@@ -215,12 +359,19 @@ export class VaultService {
       created: true,
       revision,
       etag: revision,
-      obsidianUri: this.getObsidianUri(relativePath),
+      obsidianUri: this.getObsidianUri(relativePath, vault.name),
     };
   }
 
-  public async appendNote(targetPath: string, content: string, ensureNewline: boolean = true, expectedRevision?: string) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+  public async appendNote(
+    targetPath: string,
+    content: string,
+    ensureNewline: boolean = true,
+    expectedRevision?: string,
+    vaultName?: string
+  ) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
@@ -247,12 +398,13 @@ export class VaultService {
       appended: true,
       newRevision,
       etag: newRevision,
-      obsidianUri: this.getObsidianUri(relativePath),
+      obsidianUri: this.getObsidianUri(relativePath, vault.name),
     };
   }
 
-  public async prependNote(targetPath: string, content: string, expectedRevision?: string) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+  public async prependNote(targetPath: string, content: string, expectedRevision?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
@@ -269,7 +421,6 @@ export class VaultService {
       );
     }
 
-    // Prepend below frontmatter if present
     let updated = "";
     const fmMatch = existing.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n/);
     if (fmMatch) {
@@ -287,12 +438,13 @@ export class VaultService {
       prepended: true,
       newRevision,
       etag: newRevision,
-      obsidianUri: this.getObsidianUri(relativePath),
+      obsidianUri: this.getObsidianUri(relativePath, vault.name),
     };
   }
 
-  public async updateNote(targetPath: string, content: string, expectedRevision?: string) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+  public async updateNote(targetPath: string, content: string, expectedRevision?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
@@ -317,7 +469,7 @@ export class VaultService {
       updated: true,
       newRevision,
       etag: newRevision,
-      obsidianUri: this.getObsidianUri(relativePath),
+      obsidianUri: this.getObsidianUri(relativePath, vault.name),
     };
   }
 
@@ -326,9 +478,11 @@ export class VaultService {
     target: { type: "heading" | "block"; value: string },
     operation: "replace" | "append" | "prepend",
     content: string,
-    expectedRevision?: string
+    expectedRevision?: string,
+    vaultName?: string
   ) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
@@ -350,7 +504,6 @@ export class VaultService {
 
     if (target.type === "heading") {
       const cleanTargetHeading = target.value.replace(/^#+\s*/, "").trim().toLowerCase();
-      // Locate the heading line
       let headingIndex = -1;
       let headingLevel = 0;
       let matchedHeadingText = "";
@@ -359,12 +512,11 @@ export class VaultService {
         const line = lines[i];
         const match = line.match(/^(#{1,6})\s+(.+)$/);
         if (match) {
-          const level = match[1].length;
-          const text = match[2].trim();
-          if (text.toLowerCase() === cleanTargetHeading) {
+          const currentText = match[2].trim().toLowerCase();
+          if (currentText === cleanTargetHeading) {
             headingIndex = i;
-            headingLevel = level;
-            matchedHeadingText = line;
+            headingLevel = match[1].length;
+            matchedHeadingText = lines[i];
             break;
           }
         }
@@ -373,7 +525,7 @@ export class VaultService {
       if (headingIndex === -1) {
         throw new ObsidianMcpError(
           ErrorCode.NOT_FOUND,
-          `Heading '${target.value}' not found in note '${relativePath}'.`,
+          `Heading '${target.value}' not found in note '${relativePath}'`,
           404
         );
       }
@@ -473,7 +625,7 @@ export class VaultService {
       operation,
       newRevision,
       etag: newRevision,
-      obsidianUri: this.getObsidianUri(relativePath),
+      obsidianUri: this.getObsidianUri(relativePath, vault.name),
     };
   }
 
@@ -481,10 +633,12 @@ export class VaultService {
     sourcePath: string,
     targetPath: string,
     expectedRevision?: string,
-    updateBacklinks: boolean = true
+    updateBacklinks: boolean = true,
+    vaultName?: string
   ) {
-    const src = this.pathGuard.resolveSafePath(sourcePath);
-    const dest = this.pathGuard.resolveSafePath(targetPath);
+    const vault = this.resolveVault(vaultName);
+    const src = vault.pathGuard.resolveSafePath(sourcePath);
+    const dest = vault.pathGuard.resolveSafePath(targetPath);
 
     if (!fs.existsSync(src.absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Source note '${src.relativePath}' does not exist`, 404);
@@ -504,7 +658,7 @@ export class VaultService {
       );
     }
 
-    const root = this.pathGuard.getVaultRoot();
+    const root = vault.pathGuard.getVaultRoot();
     const oldPathNoExt = src.relativePath.replace(/\.md$/, "");
     const newPathNoExt = dest.relativePath.replace(/\.md$/, "");
     const oldBaseName = path.basename(src.relativePath, ".md");
@@ -579,12 +733,13 @@ export class VaultService {
       backlinksUpdated: rollbackJournal.length,
       revision: currentRevision,
       etag: currentRevision,
-      obsidianUri: this.getObsidianUri(dest.relativePath),
+      obsidianUri: this.getObsidianUri(dest.relativePath, vault.name),
     };
   }
 
-  public async deleteNote(targetPath: string, permanent: boolean = false, expectedRevision?: string) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+  public async deleteNote(targetPath: string, permanent: boolean = false, expectedRevision?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
@@ -604,7 +759,7 @@ export class VaultService {
       AtomicFs.unlinkSync(absolutePath);
       return { path: relativePath, deleted: true, permanent: true };
     } else {
-      const res = this.trashManager.moveToTrash(absolutePath, relativePath, currentRevision);
+      const res = vault.trashManager.moveToTrash(absolutePath, relativePath, currentRevision);
       return {
         path: relativePath,
         deleted: true,
@@ -617,9 +772,10 @@ export class VaultService {
 
   // --- SEARCH DOMAIN ---
 
-  public async search(query: string, limit: number = 50) {
+  public async search(query: string, limit: number = 50, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
     try {
-      const res = await this.cliAdapter.execute("search", [`query=${query}`, "format=json", "matches"]);
+      const res = await this.cliAdapter.execute("search", [`vault=${vault.name}`, `query=${query}`, "format=json", "matches"]);
       let parsed = JSON.parse(res.stdout);
       if (Array.isArray(parsed)) {
         return { matches: parsed.slice(0, limit) };
@@ -628,7 +784,7 @@ export class VaultService {
       // In-process BM25 lexical ranking fallback
     }
 
-    const root = this.pathGuard.getVaultRoot();
+    const root = vault.pathGuard.getVaultRoot();
     const docs: DocumentItem[] = [];
 
     const walk = (dir: string) => {
@@ -657,8 +813,9 @@ export class VaultService {
     return { matches };
   }
 
-  public async searchContext(query: string, contextLines: number = 2, limit: number = 30) {
-    const root = this.pathGuard.getVaultRoot();
+  public async searchContext(query: string, contextLines: number = 2, limit: number = 30, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const root = vault.pathGuard.getVaultRoot();
     const results: Array<{ path: string; snippet: string }> = [];
 
     const walk = (dir: string) => {
@@ -670,15 +827,17 @@ export class VaultService {
         if (entry.isDirectory()) {
           walk(full);
         } else if (entry.name.endsWith(".md")) {
-          const content = fs.readFileSync(full, "utf-8");
-          const lines = content.split("\n");
+          const lines = fs.readFileSync(full, "utf-8").split("\n");
           for (let i = 0; i < lines.length; i++) {
             if (lines[i].toLowerCase().includes(query.toLowerCase())) {
               const start = Math.max(0, i - contextLines);
               const end = Math.min(lines.length, i + contextLines + 1);
               const snippet = lines.slice(start, end).join("\n");
-              results.push({ path: path.relative(root, full), snippet });
-              break;
+              results.push({
+                path: path.relative(root, full),
+                snippet,
+              });
+              if (results.length >= limit) return;
             }
           }
         }
@@ -686,15 +845,16 @@ export class VaultService {
     };
 
     walk(root);
-    return { matches: results.slice(0, limit) };
+    return { results };
   }
 
   // --- DAILY NOTES DOMAIN ---
 
-  public async readDailyNote(date?: string) {
+  public async readDailyNote(date?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
     const targetDate = date || new Date().toISOString().slice(0, 10);
     try {
-      const res = await this.cliAdapter.execute("daily:read", date ? [`date=${date}`] : []);
+      const res = await this.cliAdapter.execute("daily:read", date ? [`vault=${vault.name}`, `date=${date}`] : [`vault=${vault.name}`]);
       return { content: res.stdout, date: targetDate };
     } catch {
       // Check standard daily note paths (e.g. YYYY-MM-DD.md)
@@ -704,12 +864,13 @@ export class VaultService {
         `01-Daily/${targetDate}.md`,
       ];
       for (const p of potential) {
-        const full = path.join(this.pathGuard.getVaultRoot(), p);
+        const full = path.join(vault.pathGuard.getVaultRoot(), p);
         if (fs.existsSync(full)) {
           return {
             path: p,
             content: fs.readFileSync(full, "utf-8"),
             date: targetDate,
+            obsidianUri: this.getObsidianUri(p, vault.name),
           };
         }
       }
@@ -717,10 +878,11 @@ export class VaultService {
     }
   }
 
-  public async appendDailyNote(content: string, date?: string, expectedRevision?: string) {
+  public async appendDailyNote(content: string, date?: string, expectedRevision?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
     const targetDate = date || new Date().toISOString().slice(0, 10);
     const p = `${targetDate}.md`;
-    const full = path.join(this.pathGuard.getVaultRoot(), p);
+    const full = path.join(vault.pathGuard.getVaultRoot(), p);
 
     if (fs.existsSync(full)) {
       const existing = fs.readFileSync(full, "utf-8");
@@ -742,7 +904,7 @@ export class VaultService {
     }
 
     try {
-      const args = [`content=${content}`];
+      const args = [`vault=${vault.name}`, `content=${content}`];
       if (date) args.push(`date=${date}`);
       await this.cliAdapter.execute("daily:append", args);
       const postContent = fs.existsSync(full) ? fs.readFileSync(full, "utf-8") : content;
@@ -759,10 +921,11 @@ export class VaultService {
     }
   }
 
-  public async prependDailyNote(content: string, date?: string, expectedRevision?: string) {
+  public async prependDailyNote(content: string, date?: string, expectedRevision?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
     const targetDate = date || new Date().toISOString().slice(0, 10);
     const p = `${targetDate}.md`;
-    const full = path.join(this.pathGuard.getVaultRoot(), p);
+    const full = path.join(vault.pathGuard.getVaultRoot(), p);
 
     if (fs.existsSync(full)) {
       const existing = fs.readFileSync(full, "utf-8");
@@ -794,10 +957,10 @@ export class VaultService {
 
   // --- TASKS DOMAIN ---
 
-  public async listTasks(notePath?: string, status: string = "all") {
+  public async listTasks(notePath?: string, status: string = "all", vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
     try {
-      // Enforce tasks all to prevent active file scope trap
-      const args = ["all"];
+      const args = [`vault=${vault.name}`, "all"];
       if (status !== "all") args.push(status);
       if (notePath) args.push(`file=${notePath}`);
       const res = await this.cliAdapter.execute("tasks", args);
@@ -805,7 +968,7 @@ export class VaultService {
     } catch {
       // In-process scan for markdown task checkboxes
       const tasks: Array<{ path: string; line: number; text: string; status: string }> = [];
-      const root = this.pathGuard.getVaultRoot();
+      const root = vault.pathGuard.getVaultRoot();
 
       const scanFile = (rel: string, abs: string) => {
         const lines = fs.readFileSync(abs, "utf-8").split("\n");
@@ -827,7 +990,7 @@ export class VaultService {
       };
 
       if (notePath) {
-        const safe = this.pathGuard.resolveSafePath(notePath);
+        const safe = vault.pathGuard.resolveSafePath(notePath);
         if (fs.existsSync(safe.absolutePath)) scanFile(safe.relativePath, safe.absolutePath);
       } else {
         const walk = (dir: string) => {
@@ -846,8 +1009,15 @@ export class VaultService {
     }
   }
 
-  public async toggleTask(targetPath: string, lineNum: number, expectedRevision?: string, expectedText?: string) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+  public async toggleTask(
+    targetPath: string,
+    lineNum: number,
+    expectedRevision?: string,
+    expectedText?: string,
+    vaultName?: string
+  ) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
@@ -893,13 +1063,13 @@ export class VaultService {
 
   // --- PROPERTIES DOMAIN ---
 
-  public async getProperties(targetPath: string) {
-    const note = await this.readNote(targetPath);
+  public async getProperties(targetPath: string, vaultName?: string) {
+    const note = await this.readNote(targetPath, false, vaultName);
     return { path: note.path, properties: note.frontmatter };
   }
 
-  public async getProperty(targetPath: string, name: string) {
-    const note = await this.readNote(targetPath);
+  public async getProperty(targetPath: string, name: string, vaultName?: string) {
+    const note = await this.readNote(targetPath, false, vaultName);
     const value = note.frontmatter[name];
     if (value === undefined) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Property '${name}' not found on note '${note.path}'`, 404);
@@ -907,8 +1077,9 @@ export class VaultService {
     return { path: note.path, name, value };
   }
 
-  public async removeProperty(targetPath: string, name: string, expectedRevision?: string) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+  public async removeProperty(targetPath: string, name: string, expectedRevision?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
@@ -930,8 +1101,9 @@ export class VaultService {
     return { path: relativePath, name, removed: true, newRevision };
   }
 
-  public async setProperty(targetPath: string, name: string, value: any, expectedRevision?: string) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+  public async setProperty(targetPath: string, name: string, value: any, expectedRevision?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
@@ -955,17 +1127,44 @@ export class VaultService {
 
   // --- LINKS & GRAPH DOMAIN ---
 
-  public async getBacklinks(targetPath: string) {
+  public async getBacklinks(targetPath: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath } = vault.pathGuard.resolveSafePath(targetPath);
     try {
-      const res = await this.cliAdapter.execute("backlinks", [`path=${targetPath}`]);
-      return { path: targetPath, backlinks: res.stdout.split("\n").filter(Boolean) };
+      const res = await this.cliAdapter.execute("backlinks", [`vault=${vault.name}`, `path=${relativePath}`]);
+      return { path: relativePath, backlinks: res.stdout.split("\n").filter(Boolean) };
     } catch {
-      return { path: targetPath, backlinks: [] };
+      // In-process backlinks scan fallback across notes in this vault
+      const { files } = await this.listFiles(undefined, true, vault.name);
+      const backlinks: string[] = [];
+      const noteBaseName = path.basename(relativePath, ".md");
+      const notePathNoExt = relativePath.replace(/\.md$/, "");
+
+      for (const f of files) {
+        if (!f.path.endsWith(".md") || f.path === relativePath) continue;
+        try {
+          const noteData = await this.readNote(f.path, false, vault.name);
+          const links = extractWikilinks(noteData.content);
+          if (
+            links.some(
+              (l) =>
+                l === relativePath ||
+                l === noteBaseName ||
+                l === notePathNoExt
+            )
+          ) {
+            backlinks.push(f.path);
+          }
+        } catch {
+          // ignore read error
+        }
+      }
+      return { path: relativePath, backlinks };
     }
   }
 
-  public async getLinks(targetPath: string) {
-    const note = await this.readNote(targetPath);
+  public async getLinks(targetPath: string, vaultName?: string) {
+    const note = await this.readNote(targetPath, false, vaultName);
     const matches = note.content.matchAll(/\[\[(.*?)\]\]/g);
     const links: string[] = [];
     for (const match of matches) {
@@ -977,9 +1176,10 @@ export class VaultService {
     return { path: note.path, links };
   }
 
-  public async getLinkPath(fromPath: string, toPath: string, maxDepth: number = 6) {
-    const fromSafe = this.pathGuard.resolveSafePath(fromPath);
-    const toSafe = this.pathGuard.resolveSafePath(toPath);
+  public async getLinkPath(fromPath: string, toPath: string, maxDepth: number = 6, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const fromSafe = vault.pathGuard.resolveSafePath(fromPath);
+    const toSafe = vault.pathGuard.resolveSafePath(toPath);
 
     if (!fs.existsSync(fromSafe.absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Starting note '${fromSafe.relativePath}' does not exist`, 404);
@@ -998,80 +1198,87 @@ export class VaultService {
       };
     }
 
-    const root = this.pathGuard.getVaultRoot();
-    const noteLookup = new Map<string, string>();
-    const noteContentCache = new Map<string, string>();
+    const root = vault.pathGuard.getVaultRoot();
 
-    const scanAllNotes = (dir: string) => {
+    // In-memory adjacency graph building
+    const adjacency: Map<string, Set<string>> = new Map();
+    const normalizeTarget = (linkTarget: string): string => {
+      const clean = linkTarget.split("|")[0].split("#")[0].trim();
+      return clean.endsWith(".md") ? clean : `${clean}.md`;
+    };
+
+    const walk = (dir: string) => {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (entry.name.startsWith(".")) continue;
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) {
-          scanAllNotes(full);
+          walk(full);
         } else if (entry.name.endsWith(".md")) {
           const rel = path.relative(root, full);
-          const base = path.basename(rel, ".md");
-          const noExt = rel.replace(/\.md$/, "");
+          const content = fs.readFileSync(full, "utf-8");
+          const links = extractWikilinks(content);
+          const neighbors = new Set<string>();
 
-          noteLookup.set(rel.toLowerCase(), rel);
-          noteLookup.set(noExt.toLowerCase(), rel);
-          if (!noteLookup.has(base.toLowerCase())) {
-            noteLookup.set(base.toLowerCase(), rel);
+          for (const link of links) {
+            const normalized = normalizeTarget(link);
+            neighbors.add(normalized);
           }
+          adjacency.set(rel, neighbors);
         }
       }
     };
-    scanAllNotes(root);
 
-    const targetKey = toSafe.relativePath.toLowerCase();
+    walk(root);
 
-    // BFS Queue
-    const queue: Array<{ current: string; trail: string[] }> = [
-      { current: fromSafe.relativePath, trail: [fromSafe.relativePath] },
+    // Breadth-First Search (BFS) to guarantee shortest path
+    const queue: Array<{ current: string; path: string[] }> = [
+      { current: fromSafe.relativePath, path: [fromSafe.relativePath] },
     ];
-    const visited = new Set<string>([fromSafe.relativePath.toLowerCase()]);
+    const visited = new Set<string>([fromSafe.relativePath]);
 
     while (queue.length > 0) {
-      const { current, trail } = queue.shift()!;
+      const { current, path: currentPath } = queue.shift()!;
 
-      if (trail.length - 1 >= maxDepth) {
+      if (currentPath.length - 1 >= maxDepth) {
         continue;
       }
 
-      const currentAbs = path.join(root, current);
-      let content = noteContentCache.get(current);
-      if (content === undefined && fs.existsSync(currentAbs)) {
-        content = fs.readFileSync(currentAbs, "utf-8");
-        noteContentCache.set(current, content);
-      }
-
-      if (!content) continue;
-
-      const wikilinks = extractWikilinks(content);
-      for (const rawLink of wikilinks) {
-        const cleanLink = rawLink.split("|")[0].split("#")[0].trim().toLowerCase();
-        const resolvedTarget = noteLookup.get(cleanLink) || noteLookup.get(`${cleanLink}.md`);
-
-        if (resolvedTarget) {
-          const resolvedKey = resolvedTarget.toLowerCase();
-          if (resolvedKey === targetKey) {
-            return {
-              from: fromSafe.relativePath,
-              to: toSafe.relativePath,
-              found: true,
-              distance: trail.length,
-              path: [...trail, resolvedTarget],
-            };
+      const neighbors = adjacency.get(current) || new Set<string>();
+      for (const neighbor of neighbors) {
+        // Resolve neighbor against existing notes
+        let matchedTarget: string | null = null;
+        if (adjacency.has(neighbor)) {
+          matchedTarget = neighbor;
+        } else {
+          // Attempt match by basename
+          for (const key of adjacency.keys()) {
+            if (path.basename(key) === path.basename(neighbor)) {
+              matchedTarget = key;
+              break;
+            }
           }
+        }
 
-          if (!visited.has(resolvedKey)) {
-            visited.add(resolvedKey);
-            queue.push({
-              current: resolvedTarget,
-              trail: [...trail, resolvedTarget],
-            });
-          }
+        if (!matchedTarget) continue;
+
+        if (matchedTarget === toSafe.relativePath) {
+          const fullResultPath = [...currentPath, matchedTarget];
+          return {
+            from: fromSafe.relativePath,
+            to: toSafe.relativePath,
+            found: true,
+            distance: fullResultPath.length - 1,
+            path: fullResultPath,
+          };
+        }
+
+        if (!visited.has(matchedTarget)) {
+          visited.add(matchedTarget);
+          queue.push({
+            current: matchedTarget,
+            path: [...currentPath, matchedTarget],
+          });
         }
       }
     }
@@ -1085,50 +1292,54 @@ export class VaultService {
     };
   }
 
-  public async getOrphans() {
+  public async getOrphans(vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
     try {
-      const res = await this.cliAdapter.execute("orphans");
+      const res = await this.cliAdapter.execute("orphans", [`vault=${vault.name}`]);
       return { orphans: res.stdout.split("\n").filter(Boolean) };
     } catch {
       return { orphans: [] };
     }
   }
 
-  public async getUnresolvedLinks() {
+  public async getUnresolvedLinks(vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
     try {
-      const res = await this.cliAdapter.execute("unresolved");
+      const res = await this.cliAdapter.execute("unresolved", [`vault=${vault.name}`]);
       return { unresolved: res.stdout.split("\n").filter(Boolean) };
     } catch {
       return { unresolved: [] };
     }
   }
 
-  public async getDeadends() {
+  public async getDeadends(vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
     try {
-      const res = await this.cliAdapter.execute("deadends");
+      const res = await this.cliAdapter.execute("deadends", [`vault=${vault.name}`]);
       return { deadends: res.stdout.split("\n").filter(Boolean) };
     } catch {
       return { deadends: [] };
     }
   }
 
-  public async getTags() {
+  public async getTags(vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
     try {
-      // Enforce tags all counts scope trap workaround
-      const res = await this.cliAdapter.execute("tags", ["all", "counts"]);
+      const res = await this.cliAdapter.execute("tags", [`vault=${vault.name}`, "all", "counts"]);
       return { raw: res.stdout };
     } catch {
       return { tags: {} };
     }
   }
 
-  public async getTagNotes(tag: string) {
+  public async getTagNotes(tag: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
     const cleanTag = tag.startsWith("#") ? tag.slice(1) : tag;
     try {
-      const res = await this.cliAdapter.execute("tag", [`tag=${cleanTag}`]);
+      const res = await this.cliAdapter.execute("tag", [`vault=${vault.name}`, `tag=${cleanTag}`]);
       return { tag: cleanTag, notes: res.stdout.split("\n").filter(Boolean) };
     } catch {
-      const root = this.pathGuard.getVaultRoot();
+      const root = vault.pathGuard.getVaultRoot();
       const notes: string[] = [];
       const walk = (dir: string) => {
         const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -1159,8 +1370,9 @@ export class VaultService {
     }
   }
 
-  public async listBases() {
-    const root = this.pathGuard.getVaultRoot();
+  public async listBases(vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const root = vault.pathGuard.getVaultRoot();
     const bases: string[] = [];
     const walk = (dir: string) => {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -1175,14 +1387,15 @@ export class VaultService {
     return { bases };
   }
 
-  public async queryBase(targetPath: string, view?: string) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+  public async queryBase(targetPath: string, view?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Base file '${relativePath}' not found`, 404);
     }
 
     try {
-      const args = [`path=${relativePath}`];
+      const args = [`vault=${vault.name}`, `path=${relativePath}`];
       if (view) args.push(`view=${view}`);
       const res = await this.cliAdapter.execute("base:query", args);
       return { path: relativePath, data: res.stdout };
@@ -1199,7 +1412,8 @@ export class VaultService {
 
   // --- ADVANCED ESCAPE HATCH ---
 
-  public async executeCli(command: string, args: Record<string, string>) {
+  public async executeCli(command: string, args: Record<string, string>, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
     if (!ALLOWED_CLI_COMMANDS.has(command)) {
       throw new ObsidianMcpError(
         ErrorCode.FORBIDDEN,
@@ -1209,7 +1423,7 @@ export class VaultService {
       );
     }
 
-    const argList = Object.entries(args).map(([k, v]) => `${k}=${v}`);
+    const argList = [`vault=${vault.name}`, ...Object.entries(args).map(([k, v]) => `${k}=${v}`)];
     const res = await this.cliAdapter.execute(command, argList);
     return {
       stdout: res.stdout,
@@ -1230,9 +1444,11 @@ export class VaultService {
         relatedNotes?: boolean;
       };
       maxRelatedNotes?: number;
-    }
+    },
+    vaultName?: string
   ) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
@@ -1259,11 +1475,10 @@ export class VaultService {
     let backlinks: string[] = [];
     if (inc.backlinks) {
       try {
-        const res = await this.cliAdapter.execute("backlinks", [`path=${relativePath}`]);
+        const res = await this.cliAdapter.execute("backlinks", [`vault=${vault.name}`, `path=${relativePath}`]);
         backlinks = res.stdout.split("\n").filter(Boolean);
       } catch {
-        // In-process backlinks scan
-        const root = this.pathGuard.getVaultRoot();
+        const root = vault.pathGuard.getVaultRoot();
         const noteBaseName = path.basename(relativePath, ".md");
         const notePathNoExt = relativePath.replace(/\.md$/, "");
         const walk = (dir: string) => {
@@ -1300,7 +1515,7 @@ export class VaultService {
       if (noteTags.length > 0) {
         for (const tag of noteTags) {
           try {
-            const tagRes = await this.getTagNotes(tag);
+            const tagRes = await this.getTagNotes(tag, vault.name);
             for (const n of tagRes.notes) {
               if (n !== relativePath && !relatedNotes.includes(n)) {
                 relatedNotes.push(n);
@@ -1319,7 +1534,7 @@ export class VaultService {
       path: relativePath,
       revision,
       etag: revision,
-      obsidianUri: this.getObsidianUri(relativePath),
+      obsidianUri: this.getObsidianUri(relativePath, vault.name),
       frontmatter: inc.frontmatter ? parsed.frontmatter : undefined,
       headings: inc.headings ? headings : undefined,
       outgoingLinks: inc.outgoingLinks ? outgoingLinks : undefined,
@@ -1329,16 +1544,20 @@ export class VaultService {
     };
   }
 
-  public async findNotes(filter: {
-    query?: string;
-    tag?: string;
-    folder?: string;
-    property?: { name: string; value?: any };
-    limit?: number;
-  }) {
+  public async findNotes(
+    filter: {
+      query?: string;
+      tag?: string;
+      folder?: string;
+      property?: { name: string; value?: any };
+      limit?: number;
+    },
+    vaultName?: string
+  ) {
+    const vault = this.resolveVault(vaultName);
     const limit = filter.limit ?? 20;
-    const root = this.pathGuard.getVaultRoot();
-    const targetDir = filter.folder ? this.pathGuard.resolveSafePath(filter.folder).absolutePath : root;
+    const root = vault.pathGuard.getVaultRoot();
+    const targetDir = filter.folder ? vault.pathGuard.resolveSafePath(filter.folder).absolutePath : root;
 
     if (!fs.existsSync(targetDir)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Folder '${filter.folder}' not found`, 404);
@@ -1405,14 +1624,18 @@ export class VaultService {
     return { notes: results.slice(0, limit), total: results.length };
   }
 
-  public async recentChanges(filter: {
-    limit?: number;
-    folder?: string;
-    sinceDays?: number;
-  }) {
+  public async recentChanges(
+    filter: {
+      limit?: number;
+      folder?: string;
+      sinceDays?: number;
+    },
+    vaultName?: string
+  ) {
+    const vault = this.resolveVault(vaultName);
     const limit = filter.limit ?? 20;
-    const root = this.pathGuard.getVaultRoot();
-    const targetDir = filter.folder ? this.pathGuard.resolveSafePath(filter.folder).absolutePath : root;
+    const root = vault.pathGuard.getVaultRoot();
+    const targetDir = filter.folder ? vault.pathGuard.resolveSafePath(filter.folder).absolutePath : root;
 
     if (!fs.existsSync(targetDir)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Folder '${filter.folder}' not found`, 404);

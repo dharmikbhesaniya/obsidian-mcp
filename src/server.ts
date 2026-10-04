@@ -1,6 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { AppConfig } from "./config/config.js";
-import { PathGuard } from "./security/path-guard.js";
+import { AppConfig, parseVaultsConfig } from "./config/config.js";
 import { AuthManager, AuthContext } from "./security/auth.js";
 import { RateLimiter } from "./security/rate-limit.js";
 import { AuditLogger } from "./security/audit.js";
@@ -16,9 +15,13 @@ export function createMcpServer(config: AppConfig, getAuthContext?: () => AuthCo
     version: "1.0.0",
   });
 
-  const pathGuard = new PathGuard(config.OBSIDIAN_VAULT_PATH);
+  const parsed = parseVaultsConfig(
+    config.OBSIDIAN_VAULT_PATH,
+    config.OBSIDIAN_VAULTS,
+    config.OBSIDIAN_DEFAULT_VAULT
+  );
   const cliAdapter = new ObsidianCliAdapter(config.OBSIDIAN_BIN_PATH, config.COMMAND_TIMEOUT_MS);
-  const vaultService = new VaultService(pathGuard, cliAdapter);
+  const vaultService = new VaultService(parsed.vaults, cliAdapter, undefined, parsed.defaultVault);
   const authManager = new AuthManager(config);
   const rateLimiter = new RateLimiter(config.RATE_LIMIT_PER_MINUTE);
   const auditLogger = new AuditLogger(config.AUDIT_LOG_ENABLED);
@@ -31,7 +34,7 @@ export function createMcpServer(config: AppConfig, getAuthContext?: () => AuthCo
     server,
     vaultService,
     cliAdapter,
-    pathGuard,
+    pathGuard: vaultService.getPathGuard(),
     authManager,
   };
 }

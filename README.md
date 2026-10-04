@@ -65,7 +65,7 @@ Obsidian Remote MCP Server is an enterprise-grade capability runtime connecting 
           ┌─────────────────────┼─────────────────────┐
           ▼                     ▼                     ▼
      Typed Tools            Resources              Prompts
-    (28 Semantic)         (URI Context)         (Guided Workflows)
+    (51 Semantic)         (URI Context)         (Guided Workflows)
           │                     │                     │
           └─────────────────────┼─────────────────────┘
                                 ▼
@@ -88,19 +88,28 @@ Obsidian Remote MCP Server is an enterprise-grade capability runtime connecting 
 
 ## Feature & Capability Summary
 
-The server exposes 28 strongly-typed semantic tools (25 active by default, with destructive tools and CLI gated by feature flags), 7 direct read resources, and 7 guided prompts:
+The server exposes 51 strongly-typed semantic tools (with advanced CLI escape hatch gated behind `ENABLE_ADVANCED_CLI=true`), 7 direct read resources, and 7 guided prompts:
 
-### Tools (28 Semantic Capabilities)
-- **Vault Domain**: `obsidian_get_vault`, `obsidian_list_files`, `obsidian_get_file_info`
-- **Notes Domain**: `obsidian_read_note`, `obsidian_create_note`, `obsidian_append_note`, `obsidian_prepend_note`, `obsidian_update_note`, `obsidian_move_note` (gated by `ENABLE_DESTRUCTIVE_TOOLS`), `obsidian_delete_note` (gated by `ENABLE_DESTRUCTIVE_TOOLS`) — all mutations protected by optimistic concurrency revision checks.
-- **Search Domain**: `obsidian_search`, `obsidian_search_context`
-- **Context & Discovery Domain**: `obsidian_get_note_context` (with selective include budget controls), `obsidian_find_notes`, `obsidian_recent_changes`
-- **Daily Notes Domain**: `obsidian_read_daily_note`, `obsidian_append_daily_note`, `obsidian_prepend_daily_note`
-- **Properties Domain**: `obsidian_get_properties`, `obsidian_get_property`, `obsidian_set_property`, `obsidian_remove_property` (structured YAML preservation)
-- **Tasks Domain**: `obsidian_list_tasks`, `obsidian_toggle_task` (with revision and line-drift validation)
-- **Knowledge Graph Domain**: `obsidian_get_backlinks`, `obsidian_get_links`, `obsidian_get_orphans`, `obsidian_get_unresolved_links`, `obsidian_get_deadends`
-- **Tags & Bases Domain**: `obsidian_get_tags`, `obsidian_get_tag_notes`, `obsidian_list_bases`, `obsidian_query_base`
-- **Guarded Escape Hatch**: `obsidian_cli` *(strictly allowlisted, disabled by default, gated by `ENABLE_ADVANCED_CLI=true` and `vault:developer` scope)*
+### Tools (51 Semantic Capabilities)
+- **Vault Domain (4 tools)**: `obsidian_list_vaults` (multi-vault inventory), `obsidian_get_vault`, `obsidian_list_files`, `obsidian_get_file_info`
+- **Notes Domain (8 tools)**: `obsidian_read_note`, `obsidian_create_note`, `obsidian_append_note`, `obsidian_prepend_note`, `obsidian_update_note`, `obsidian_patch_note` (surgical search/replace/regex editing), `obsidian_move_note`, `obsidian_delete_note` (safe atomic trash by default)
+- **Search Domain (2 tools)**: `obsidian_search`, `obsidian_search_context`
+- **Context & Discovery Domain (3 tools)**: `obsidian_get_note_context` (selective include budget controls), `obsidian_find_notes`, `obsidian_recent_changes`
+- **Daily Notes Domain (3 tools)**: `obsidian_read_daily_note`, `obsidian_append_daily_note`, `obsidian_prepend_daily_note`
+- **Bookmarks Domain (2 tools)**: `obsidian_list_bookmarks`, `obsidian_create_bookmark`
+- **Outline & Structure Domain (1 tool)**: `obsidian_get_outline` (hierarchical heading tree with line offsets)
+- **Aliases Domain (1 tool)**: `obsidian_list_aliases` (frontmatter alias resolution)
+- **Templates Domain (2 tools)**: `obsidian_list_templates`, `obsidian_read_template` (variable resolution for `{{title}}`, `{{date}}`, `{{time}}`)
+- **Metrics & Stats Domain (1 tool)**: `obsidian_word_count` (words, characters, sentences, paragraphs, reading time)
+- **Random & Unique Notes (2 tools)**: `obsidian_random_note`, `obsidian_create_unique_note` (Zettelkasten style with entropy and guaranteed collision prevention)
+- **Desktop Integration (1 tool)**: `obsidian_open_note` (desktop app launch with accurate execution reporting and URI fallback)
+- **Plugins & Customization (2 tools)**: `obsidian_list_plugins`, `obsidian_list_snippets`
+- **Commands Domain (2 tools)**: `obsidian_list_commands`, `obsidian_execute_command`
+- **Properties Domain (4 tools)**: `obsidian_get_properties`, `obsidian_get_property`, `obsidian_set_property`, `obsidian_remove_property`
+- **Tasks Domain (2 tools)**: `obsidian_list_tasks`, `obsidian_toggle_task`
+- **Knowledge Graph Domain (6 tools)**: `obsidian_get_backlinks`, `obsidian_get_links`, `obsidian_get_link_path`, `obsidian_get_orphans`, `obsidian_get_unresolved_links`, `obsidian_get_deadends`
+- **Tags & Bases Domain (4 tools)**: `obsidian_get_tags`, `obsidian_get_tag_notes`, `obsidian_list_bases`, `obsidian_query_base`
+- **Guarded Escape Hatch (1 tool)**: `obsidian_cli` *(strictly allowlisted through central command registry, disabled by default, gated by `ENABLE_ADVANCED_CLI=true` and `vault:developer` scope)*
 
 ### Resources (7 Direct Read Contexts)
 - `obsidian://vault`: Vault statistics, file count, and connectivity state.
@@ -207,7 +216,7 @@ Add the server to Cursor's MCP configuration in `~/.cursor/mcp.json` or project 
 Test tools interactively in the browser without an external client:
 
 ```bash
-npx @modelcontextprotocol/inspector node dist/index.js --transport=stdio
+npx @modelcontextprotocol/inspector@latest node dist/index.js --transport=stdio
 ```
 
 ---

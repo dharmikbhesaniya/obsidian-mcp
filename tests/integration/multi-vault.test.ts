@@ -174,6 +174,29 @@ describe("Multi-Vault Architecture & Isolation", () => {
       expect(searchPersonal.matches.some((m) => m.path === "Secret.md")).toBe(true);
     });
 
+    it("should prevent cross-vault path traversal and crossing attempts", async () => {
+      const service = new VaultService(
+        {
+          personal: personalVaultDir,
+          work: workVaultDir,
+        },
+        cliAdapter
+      );
+
+      // Attempting to use relative traversal from personal to read work note
+      await expect(
+        service.readNote("../work-vault/Project-Alpha.md", false, "personal")
+      ).rejects.toThrowError(/Path traversal detected/);
+
+      // Attempting to write into work vault via personal vault path traversal
+      await expect(
+        service.createNote("../work-vault/Hacked.md", "Cross vault payload", undefined, false, undefined, "personal")
+      ).rejects.toThrowError(/Path traversal detected/);
+
+      // Verify work vault remained untouched
+      expect(fs.existsSync(path.join(workVaultDir, "Hacked.md"))).toBe(false);
+    });
+
     it("should throw 404 with helpful error message when non-existent vault is requested", async () => {
       const service = new VaultService(
         {

@@ -15,38 +15,13 @@ import {
   extractWikilinks,
 } from "../utils/frontmatter.js";
 
-export const ALLOWED_CLI_COMMANDS = new Set([
-  "version",
-  "search",
-  "tasks",
-  "task",
-  "backlinks",
-  "links",
-  "orphans",
-  "unresolved",
-  "deadends",
-  "tags",
-  "tag",
-  "properties",
-  "bases",
-  "outline",
-  "daily:read",
-  "daily:path",
-  "bookmarks",
-  "bookmark",
-  "aliases",
-  "templates",
-  "template:read",
-  "wordcount",
-  "random",
-  "random:read",
-  "unique",
-  "open",
-  "plugins",
-  "snippets",
-  "commands",
-  "command",
-]);
+import {
+  ALLOWED_CLI_COMMANDS,
+  isCliCommandAllowed,
+  getCliCommandMetadata,
+} from "../config/commands.js";
+
+export { ALLOWED_CLI_COMMANDS, isCliCommandAllowed, getCliCommandMetadata };
 
 export function stripObsidianComments(content: string): string {
   return content.replace(/%%[\s\S]*?%%/g, "");
@@ -1967,12 +1942,24 @@ export class VaultService {
     folder?: string,
     vaultName?: string
   ) {
+    const vault = this.resolveVault(vaultName);
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
-    const id = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const baseId = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const randSuffix = crypto.randomBytes(2).toString("hex");
+    const id = `${baseId}-${randSuffix}`;
     const cleanTitle = title.trim();
-    const noteName = cleanTitle ? `${id} ${cleanTitle}.md` : `${id}.md`;
-    const targetPath = folder ? path.join(folder, noteName) : noteName;
+
+    let noteName = cleanTitle ? `${id} ${cleanTitle}.md` : `${id}.md`;
+    let targetPath = folder ? path.join(folder, noteName) : noteName;
+
+    // Guaranteed uniqueness invariant: check existence and increment counter if needed
+    let counter = 1;
+    while (fs.existsSync(vault.pathGuard.resolveSafePath(targetPath).absolutePath)) {
+      noteName = cleanTitle ? `${id}-${counter} ${cleanTitle}.md` : `${id}-${counter}.md`;
+      targetPath = folder ? path.join(folder, noteName) : noteName;
+      counter++;
+    }
 
     return this.createNote(targetPath, content, undefined, false, undefined, vaultName);
   }
@@ -1986,17 +1973,23 @@ export class VaultService {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist to open`, 404);
     }
     const uri = this.getObsidianUri(relativePath, vault.name);
+    let opened = false;
+    let message = "";
     try {
       const args = [`vault=${vault.name}`, `file=${relativePath}`];
       if (newTab) args.push("newtab");
       await this.cliAdapter.execute("open", args);
+      opened = true;
+      message = "Note successfully opened in Obsidian desktop application";
     } catch {
-      // CLI not running; obsidianUri is returned for opening
+      opened = false;
+      message = "Obsidian CLI is not currently running or reachable; provided obsidianUri for application opening";
     }
     return {
       path: relativePath,
-      opened: true,
+      opened,
       obsidianUri: uri,
+      message,
     };
   }
 

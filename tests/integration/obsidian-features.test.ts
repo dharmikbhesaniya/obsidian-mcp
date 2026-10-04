@@ -5,6 +5,7 @@ import os from "node:os";
 import { VaultService } from "../../src/services/vault.service.js";
 import { ObsidianCliAdapter } from "../../src/adapters/obsidian/cli.adapter.js";
 import { PathGuard } from "../../src/security/path-guard.js";
+import { ObsidianMcpError } from "../../src/schemas/errors.js";
 
 describe("Obsidian Extended Capabilities", () => {
   let tempVaultDir: string;
@@ -44,6 +45,21 @@ describe("Obsidian Extended Capabilities", () => {
       expect(after.bookmarks[0].path).toBe("DeepWork.md");
       expect(after.bookmarks[0].title).toBe("Deep Work Notes");
     });
+
+    it("should throw 404 when attempting to bookmark a non-existent file", async () => {
+      await expect(service.createBookmark("GhostNote.md")).rejects.toThrowError(
+        /File 'GhostNote\.md' not found to bookmark/
+      );
+    });
+
+    it("should recover gracefully from malformed bookmarks.json", async () => {
+      const dotObsidian = path.join(tempVaultDir, ".obsidian");
+      fs.mkdirSync(dotObsidian, { recursive: true });
+      fs.writeFileSync(path.join(dotObsidian, "bookmarks.json"), "{ invalid JSON content !!!");
+
+      const res = await service.listBookmarks();
+      expect(res.bookmarks).toEqual([]);
+    });
   });
 
   describe("Outline", () => {
@@ -70,6 +86,10 @@ Final thoughts.
         { level: 3, text: "Subsection 1.1", line: 7 },
         { level: 2, text: "Section 2", line: 10 },
       ]);
+    });
+
+    it("should throw 404 when extracting outline of non-existent note", async () => {
+      await expect(service.getOutline("Missing.md")).rejects.toThrowError(ObsidianMcpError);
     });
   });
 
@@ -128,6 +148,16 @@ Created: {{date}} at {{time}}
       expect(read.content).not.toContain("{{date}}");
       expect(read.content).not.toContain("{{time}}");
     });
+
+    it("should throw 404 when requested template does not exist", async () => {
+      await expect(service.readTemplate("NonExistentTemplate")).rejects.toThrowError(
+        /Template 'NonExistentTemplate' not found/
+      );
+    });
+
+    it("should reject path traversal in template name", async () => {
+      await expect(service.readTemplate("../../etc/passwd")).rejects.toThrowError();
+    });
   });
 
   describe("Word Count & Metrics", () => {
@@ -158,22 +188,38 @@ Yes, there are.
   });
 
   describe("Unique / Zettelkasten Note", () => {
-    it("should generate timestamp-prefixed unique notes", async () => {
+    it("should generate timestamp-prefixed unique notes with random entropy", async () => {
       const unique = await service.createUniqueNote("Quantum Computing", "# Quantum\nQubits.");
       expect(unique.created).toBe(true);
-      expect(unique.path).toMatch(/^\d{12} Quantum Computing\.md$/);
+      expect(unique.path).toMatch(/^\d{14}-[a-f0-9]{4} Quantum Computing\.md$/);
 
       const read = await service.readNote(unique.path);
       expect(read.content).toContain("# Quantum");
     });
+
+    it("should guarantee uniqueness even with identical titles created in immediate succession", async () => {
+      const note1 = await service.createUniqueNote("CollisionTest", "Note 1");
+      const note2 = await service.createUniqueNote("CollisionTest", "Note 2");
+
+      expect(note1.path).not.toBe(note2.path);
+      expect(fs.existsSync(path.join(tempVaultDir, note1.path))).toBe(true);
+      expect(fs.existsSync(path.join(tempVaultDir, note2.path))).toBe(true);
+    });
   });
 
   describe("Desktop Integration (Open Note)", () => {
-    it("should resolve obsidian URI for desktop open", async () => {
+    it("should report opened=false and return obsidianUri when CLI is not available", async () => {
       await service.createNote("OpenMe.md", "Open me in desktop");
       const res = await service.openNote("OpenMe.md");
-      expect(res.opened).toBe(true);
+      expect(res.opened).toBe(false);
       expect(res.obsidianUri).toContain("obsidian://open?vault=");
+      expect(res.message).toContain("Obsidian CLI is not currently running or reachable");
+    });
+
+    it("should throw 404 when opening a non-existent note", async () => {
+      await expect(service.openNote("DoesNotExist.md")).rejects.toThrowError(
+        /Note 'DoesNotExist\.md' does not exist to open/
+      );
     });
   });
 
@@ -186,21 +232,51 @@ Yes, there are.
         path.join(dotObsidian, "community-plugins.json"),
         JSON.stringify(["dataview", "omnisearch"])
       );
+      fs.writeFileSync(
+        path.join(dotObsidian, "core-plugins.json"),
+        JSON.stringify({ bookmarks: true, canvas: true, sync: false })
+      );
 
       const snippetsDir = path.join(dotObsidian, "snippets");
       fs.mkdirSync(snippetsDir, { recursive: true });
-      fs.writeFileSync(path.join(snippetsDir, "custom-cards.css"), "/* CSS */");
+      fs.writeFileSync(path.join(snippetsDir, "custom-theme.css"), "body { color: red; }");
 
       fs.writeFileSync(
         path.join(dotObsidian, "appearance.json"),
-        JSON.stringify({ enabledCssSnippets: ["custom-cards"] })
+        JSON.stringify({ enabledCssSnippets: ["custom-theme"] })
       );
 
       const plugins = await service.listPlugins();
       expect(plugins.communityPlugins).toEqual(["dataview", "omnisearch"]);
+      expect(plugins.corePlugins).toEqual({ bookmarks: true, canvas: true, sync: false });
+      expect(plugins.totalCommunity).toBe(2);
 
       const snippets = await service.listSnippets();
-      expect(snippets.snippets).toEqual([{ name: "custom-cards", enabled: true }]);
+      expect(snippets.totalSnippets).toBe(1);
+      expect(snippets.snippets[0]).toEqual({
+        name: "custom-theme",
+        enabled: true,
+      });
+    });
+
+    it("should handle corrupted plugins JSON gracefully without throwing", async () => {
+      const dotObsidian = path.join(tempVaultDir, ".obsidian");
+      fs.mkdirSync(dotObsidian, { recursive: true });
+      fs.writeFileSync(path.join(dotObsidian, "community-plugins.json"), "CORRUPT JSON");
+      fs.writeFileSync(path.join(dotObsidian, "core-plugins.json"), "CORRUPT JSON");
+
+      const plugins = await service.listPlugins();
+      expect(plugins.communityPlugins).toEqual([]);
+      expect(plugins.corePlugins).toEqual({});
+      expect(plugins.totalCommunity).toBe(0);
+    });
+  });
+
+  describe("CLI Command Allowlist", () => {
+    it("should reject unapproved commands through executeCli", async () => {
+      await expect(
+        service.executeCli("malicious-rm", {})
+      ).rejects.toThrowError(/not in the Obsidian CLI allowlist/);
     });
   });
 });

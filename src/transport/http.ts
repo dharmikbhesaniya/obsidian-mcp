@@ -1,11 +1,15 @@
 import express, { Request, Response } from "express";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { AppConfig } from "../config/config.js";
 import { createMcpServer } from "../server.js";
 import { AuthContext, authStorage } from "../security/auth.js";
-import fs from "node:fs";
 
-interface SessionRecord {
+interface SseSessionRecord {
+  server: McpServer;
   transport: SSEServerTransport;
   auth: AuthContext;
   createdAt: number;
@@ -16,23 +20,41 @@ export async function runHttpServer(config: AppConfig) {
   const app = express();
   app.use(express.json({ limit: "10mb" }));
 
-  const { server, cliAdapter, pathGuard, authManager } = createMcpServer(config);
+  // Shared subsystem instances for health and authentication
+  const { pathGuard, cliAdapter, authManager } = createMcpServer(config);
 
+  // 1. Native Streamable HTTP Transport (/mcp)
+  const { server: streamableServer } = createMcpServer(config);
+  const streamableSessions = new Set<string>();
+
+  const streamableTransport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => crypto.randomUUID(),
+    onsessioninitialized: (sessionId: string) => {
+      streamableSessions.add(sessionId);
+    },
+    onsessionclosed: (sessionId: string) => {
+      streamableSessions.delete(sessionId);
+    },
+  });
+
+  await streamableServer.connect(streamableTransport);
+
+  // 2. Legacy SSE Transport Sessions (/sse, /messages)
   const MAX_CONCURRENT_SESSIONS = 50;
   const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-  const sessions = new Map<string, SessionRecord>();
+  const sseSessions = new Map<string, SseSessionRecord>();
 
-  // Periodic idle session cleanup
+  // Periodic idle session cleanup for legacy SSE sessions
   const cleanupInterval = setInterval(() => {
     const now = Date.now();
-    for (const [id, record] of sessions.entries()) {
+    for (const [id, record] of sseSessions.entries()) {
       if (now - record.lastActive > SESSION_IDLE_TIMEOUT_MS) {
         try {
           record.transport.close();
         } catch {
           // Ignore close error
         }
-        sessions.delete(id);
+        sseSessions.delete(id);
       }
     }
   }, 60 * 1000);
@@ -42,7 +64,9 @@ export async function runHttpServer(config: AppConfig) {
     res.json({
       status: "ok",
       mcp: "running",
-      activeSessions: sessions.size,
+      activeSessions: streamableSessions.size + sseSessions.size,
+      streamableSessions: streamableSessions.size,
+      sseSessions: sseSessions.size,
       uptimeSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     });
@@ -61,96 +85,63 @@ export async function runHttpServer(config: AppConfig) {
     });
   });
 
-  // Extract AuthContext safely without global state
+  // Extract AuthContext safely; throws AUTH_REQUIRED if missing or invalid
   const extractAuth = (req: Request): AuthContext => {
     return authManager.authenticateHeader(req.headers.authorization);
   };
 
-  // 1. Modern Streamable HTTP /mcp endpoint
+  // Canonical MCP Streamable HTTP endpoint
   app.all("/mcp", async (req: Request, res: Response) => {
     try {
       const auth = extractAuth(req);
 
       await authStorage.run(auth, async () => {
-        if (req.method === "GET") {
-          // SSE Handshake for Streamable HTTP clients
-          if (sessions.size >= MAX_CONCURRENT_SESSIONS) {
-            res.status(503).json({ error: "Max concurrent MCP sessions exceeded" });
-            return;
-          }
-
-          const transport = new SSEServerTransport("/mcp/messages", res);
-          const record: SessionRecord = {
-            transport,
-            auth,
-            createdAt: Date.now(),
-            lastActive: Date.now(),
-          };
-          sessions.set(transport.sessionId, record);
-
-          transport.onclose = () => {
-            sessions.delete(transport.sessionId);
-          };
-
-          await server.connect(transport);
-        } else if (req.method === "POST") {
-          // Direct JSON-RPC or message posting
-          const sessionId = String(req.query.sessionId || req.headers["x-session-id"] || "");
-          const session = sessions.get(sessionId);
-
-          if (!session) {
-            res.status(404).json({ error: "Session not found or expired. Initialize via GET /mcp or GET /sse first." });
-            return;
-          }
-
-          session.lastActive = Date.now();
-          await session.transport.handlePostMessage(req, res);
-        } else {
-          res.status(405).json({ error: `Method ${req.method} not allowed` });
-        }
+        await streamableTransport.handleRequest(req, res, req.body);
       });
     } catch (err: any) {
       res.status(err.statusCode || 401).json(err.toJSON ? err.toJSON() : { error: err.message });
     }
   });
 
-  // 2. Legacy /sse Transport Handshake
+  // Legacy /sse Transport Handshake for older agents
   app.get("/sse", async (req: Request, res: Response) => {
     try {
       const auth = extractAuth(req);
 
-      await authStorage.run(auth, async () => {
-        if (sessions.size >= MAX_CONCURRENT_SESSIONS) {
-          res.status(503).json({ error: "Max concurrent MCP sessions exceeded" });
-          return;
-        }
+      if (sseSessions.size >= MAX_CONCURRENT_SESSIONS) {
+        res.status(503).json({ error: "Max concurrent SSE sessions exceeded" });
+        return;
+      }
 
+      await authStorage.run(auth, async () => {
+        const { server: sessionServer } = createMcpServer(config);
         const transport = new SSEServerTransport("/messages", res);
-        const record: SessionRecord = {
+        const record: SseSessionRecord = {
+          server: sessionServer,
           transport,
           auth,
           createdAt: Date.now(),
           lastActive: Date.now(),
         };
-        sessions.set(transport.sessionId, record);
+        sseSessions.set(transport.sessionId, record);
 
         transport.onclose = () => {
-          sessions.delete(transport.sessionId);
+          sseSessions.delete(transport.sessionId);
         };
 
-        await server.connect(transport);
+        await sessionServer.connect(transport);
       });
     } catch (err: any) {
       res.status(err.statusCode || 401).json(err.toJSON ? err.toJSON() : { error: err.message });
     }
   });
 
-  // 3. Messages handler for /sse sessions
+  // Message Handler for legacy /sse sessions
   const handleMessages = async (req: Request, res: Response) => {
     try {
       const auth = extractAuth(req);
       const sessionId = String(req.query.sessionId || req.headers["x-session-id"] || "");
-      const session = sessions.get(sessionId);
+      const session = sseSessions.get(sessionId);
 
       if (!session) {
         res.status(404).json({ error: "Session not found or expired" });
@@ -167,11 +158,10 @@ export async function runHttpServer(config: AppConfig) {
   };
 
   app.post("/messages", handleMessages);
-  app.post("/mcp/messages", handleMessages);
 
   const httpServer = app.listen(config.PORT, config.HOST, () => {
     console.log(
-      `Obsidian MCP Server listening on http://${config.HOST}:${config.PORT} (Transports: Streamable HTTP /mcp, Legacy /sse)`
+      `Obsidian MCP Server listening on http://${config.HOST}:${config.PORT} (Streamable HTTP /mcp, Legacy /sse)`
     );
   });
 
@@ -180,14 +170,20 @@ export async function runHttpServer(config: AppConfig) {
     console.log(`Received ${signal}. Gracefully shutting down Obsidian MCP server...`);
     clearInterval(cleanupInterval);
 
-    for (const [id, record] of sessions.entries()) {
+    try {
+      await streamableTransport.close();
+    } catch {
+      // Ignore close error
+    }
+
+    for (const [id, record] of sseSessions.entries()) {
       try {
         await record.transport.close();
       } catch {
         // Ignore session close error
       }
     }
-    sessions.clear();
+    sseSessions.clear();
 
     httpServer.close(() => {
       console.log("HTTP server stopped cleanly.");

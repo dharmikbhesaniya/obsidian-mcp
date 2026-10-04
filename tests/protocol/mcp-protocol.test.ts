@@ -50,4 +50,30 @@ describe("MCP Protocol & Capability Registration", () => {
     const updatedVaultMeta = await vaultService.getVault();
     expect(updatedVaultMeta.totalFiles).toBe(1);
   });
+
+  it("should conditionally register tools based on feature flags", () => {
+    // 1. Default config (ENABLE_ADVANCED_CLI not true, ENABLE_DESTRUCTIVE_TOOLS !== false)
+    const { server: serverDefault } = createMcpServer(testConfig);
+    const defaultToolNames = Object.keys((serverDefault as any)._registeredTools || {});
+    expect(defaultToolNames).toContain("obsidian_delete_note");
+    expect(defaultToolNames).toContain("obsidian_move_note");
+    expect(defaultToolNames).not.toContain("obsidian_cli");
+
+    // 2. ENABLE_ADVANCED_CLI: true
+    const { server: serverWithCli } = createMcpServer({
+      ...testConfig,
+      ENABLE_ADVANCED_CLI: true,
+    });
+    const cliToolNames = Object.keys((serverWithCli as any)._registeredTools || {});
+    expect(cliToolNames).toContain("obsidian_cli");
+
+    // 3. ENABLE_DESTRUCTIVE_TOOLS: false
+    const { server: serverSafe } = createMcpServer({
+      ...testConfig,
+      ENABLE_DESTRUCTIVE_TOOLS: false,
+    });
+    const safeToolNames = Object.keys((serverSafe as any)._registeredTools || {});
+    expect(safeToolNames).not.toContain("obsidian_delete_note");
+    expect(safeToolNames).not.toContain("obsidian_move_note");
+  });
 });

@@ -23,7 +23,7 @@ export function createMcpServer(config: AppConfig, getAuthContext?: () => AuthCo
   const rateLimiter = new RateLimiter(config.RATE_LIMIT_PER_MINUTE);
   const auditLogger = new AuditLogger();
 
-  registerTools(server, vaultService, authManager, rateLimiter, auditLogger, getAuthContext);
+  registerTools(server, vaultService, authManager, rateLimiter, auditLogger, config, getAuthContext);
   registerResources(server, vaultService);
   registerPrompts(server);
 

@@ -194,4 +194,106 @@ Refer to [[03-Knowledge/Auth]] for credentials.
     expect(recent.recentChanges[0].path).toBe("recent2.md");
     expect(recent.recentChanges[1].path).toBe("recent1.md");
   });
+
+  it("should enforce expectedRevision on moveNote", async () => {
+    const notePath = "move-source.md";
+    const destPath = "archive/move-dest.md";
+    await service.createNote(notePath, "Initial content for move");
+
+    const read = await service.readNote(notePath);
+    const rev1 = read.revision;
+
+    // Stale revision must throw CONFLICT
+    await expect(
+      service.moveNote(notePath, destPath, "stale-rev-12345")
+    ).rejects.toThrowError(ObsidianMcpError);
+
+    // Matching revision succeeds
+    const moveRes = await service.moveNote(notePath, destPath, rev1);
+    expect(moveRes.moved).toBe(true);
+    const movedNote = await service.readNote(destPath);
+    expect(movedNote.content).toContain("Initial content for move");
+    await expect(service.readNote(notePath)).rejects.toThrowError(ObsidianMcpError);
+  });
+
+  it("should enforce expectedRevision on appendDailyNote and prependDailyNote", async () => {
+    // 1. Initial appendDailyNote (creates if not existing)
+    const daily1 = await service.appendDailyNote("- [ ] Morning task");
+    expect(daily1.created || daily1.appended).toBe(true);
+    const rev1 = daily1.newRevision;
+
+    // Stale revision on appendDailyNote must throw CONFLICT
+    await expect(
+      service.appendDailyNote("- [ ] Afternoon task", undefined, "stale-revision")
+    ).rejects.toThrowError(ObsidianMcpError);
+
+    // Matching revision succeeds
+    const daily2 = await service.appendDailyNote("- [ ] Afternoon task", undefined, rev1);
+    expect(daily2.appended).toBe(true);
+    const rev2 = daily2.newRevision;
+
+    // Stale revision on prependDailyNote must throw CONFLICT
+    await expect(
+      service.prependDailyNote("## Today Plan\n", undefined, "stale-revision")
+    ).rejects.toThrowError(ObsidianMcpError);
+
+    // Matching revision on prependDailyNote succeeds
+    const daily3 = await service.prependDailyNote("## Today Plan\n", undefined, rev2);
+    expect(daily3.prepended).toBe(true);
+  });
+
+  it("should enforce expectedRevision and expectedText line-drift check on toggleTask", async () => {
+    const notePath = "tasks-concurrency.md";
+    await service.createNote(notePath, "# Tasks\n- [ ] Deploy server\n- [ ] Run migration");
+
+    const read = await service.readNote(notePath);
+    const rev1 = read.revision;
+
+    // Line 2 is "- [ ] Deploy server"
+    // 1. Stale revision must throw CONFLICT
+    await expect(
+      service.toggleTask(notePath, 2, "stale-revision")
+    ).rejects.toThrowError(ObsidianMcpError);
+
+    // 2. Line drift: expectedText mismatch must throw CONFLICT
+    await expect(
+      service.toggleTask(notePath, 2, rev1, "- [ ] Run migration")
+    ).rejects.toThrowError(ObsidianMcpError);
+
+    // 3. Matching revision and matching expectedText succeeds
+    const toggleRes = await service.toggleTask(notePath, 2, rev1, "- [ ] Deploy server");
+    expect(toggleRes.toggled).toBe(true);
+
+    const updated = await service.readNote(notePath);
+    expect(updated.content).toContain("- [x] Deploy server");
+  });
+
+  it("should respect include flags and maxRelatedNotes in getNoteContext", async () => {
+    await service.createNote("04-Budget/Main.md", `---
+title: Main Note
+tags: [tag1, tag2]
+---
+# Main Heading
+Content body line.
+See [[04-Budget/Rel1]] and [[04-Budget/Rel2]].
+`);
+    await service.createNote("04-Budget/Rel1.md", "Content 1 referencing [[04-Budget/Main]]");
+    await service.createNote("04-Budget/Rel2.md", "Content 2 referencing [[04-Budget/Main]]");
+
+    // Context with selective includes
+    const selectiveCtx = await service.getNoteContext("04-Budget/Main.md", {
+      include: {
+        body: false,
+        backlinks: false,
+        headings: false,
+      },
+      maxRelatedNotes: 1,
+    });
+
+    expect(selectiveCtx.body).toBeUndefined();
+    expect(selectiveCtx.backlinks).toBeUndefined();
+    expect(selectiveCtx.headings).toBeUndefined();
+    expect(selectiveCtx.frontmatter.title).toBe("Main Note");
+    expect(selectiveCtx.relatedNotes.length).toBeLessThanOrEqual(1);
+  });
 });

@@ -40,6 +40,7 @@ export const UpdateNoteSchema = z.object({
 export const MoveNoteSchema = z.object({
   sourcePath: VaultRelativePathSchema,
   targetPath: VaultRelativePathSchema,
+  expectedRevision: z.string().optional(),
 });
 export const DeleteNoteSchema = z.object({
   path: VaultRelativePathSchema,
@@ -65,10 +66,12 @@ export const ReadDailyNoteSchema = z.object({
 export const AppendDailyNoteSchema = z.object({
   content: z.string().min(1, "Content cannot be empty"),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Format must be YYYY-MM-DD").optional(),
+  expectedRevision: z.string().optional(),
 });
 export const PrependDailyNoteSchema = z.object({
   content: z.string().min(1, "Content cannot be empty"),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Format must be YYYY-MM-DD").optional(),
+  expectedRevision: z.string().optional(),
 });
 
 // Properties schemas
@@ -99,6 +102,8 @@ export const ListTasksSchema = z.object({
 export const ToggleTaskSchema = z.object({
   path: VaultRelativePathSchema,
   line: z.number().int().min(1),
+  expectedRevision: z.string().optional(),
+  expectedText: z.string().optional(),
 });
 
 // Links schemas
@@ -128,6 +133,17 @@ export const QueryBaseSchema = z.object({
 // Context & Discovery schemas
 export const GetNoteContextSchema = z.object({
   path: VaultRelativePathSchema,
+  include: z
+    .object({
+      body: z.boolean().default(true),
+      frontmatter: z.boolean().default(true),
+      headings: z.boolean().default(true),
+      backlinks: z.boolean().default(true),
+      outgoingLinks: z.boolean().default(true),
+      relatedNotes: z.boolean().default(true),
+    })
+    .default({}),
+  maxRelatedNotes: z.number().int().min(0).max(50).default(10),
 });
 export const FindNotesSchema = z.object({
   query: z.string().optional(),

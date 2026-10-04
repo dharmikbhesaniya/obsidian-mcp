@@ -5,6 +5,7 @@ import { AuthManager, AuthContext, getCurrentAuthContext } from "../security/aut
 import { RateLimiter } from "../security/rate-limit.js";
 import { AuditLogger } from "../security/audit.js";
 import { TOOL_SCOPES } from "../config/scopes.js";
+import { AppConfig } from "../config/config.js";
 import * as Schemas from "../schemas/tools.js";
 
 export function registerTools(
@@ -13,6 +14,7 @@ export function registerTools(
   authManager: AuthManager,
   rateLimiter: RateLimiter,
   auditLogger: AuditLogger,
+  config?: AppConfig,
   getAuthContext?: () => AuthContext
 ) {
   // Helper to wrap tool execution with Auth, Rate-limiting, and Audit logging
@@ -83,8 +85,12 @@ export function registerTools(
   server.tool("obsidian_append_note", "Appends text content to an existing note with revision check", Schemas.AppendNoteSchema.shape, wrapHandler("obsidian_append_note", (args) => vaultService.appendNote(args.path, args.content, args.ensureNewline, args.expectedRevision)));
   server.tool("obsidian_prepend_note", "Prepends text content below frontmatter in an existing note with revision check", Schemas.PrependNoteSchema.shape, wrapHandler("obsidian_prepend_note", (args) => vaultService.prependNote(args.path, args.content, args.expectedRevision)));
   server.tool("obsidian_update_note", "Updates note content with optimistic revision control", Schemas.UpdateNoteSchema.shape, wrapHandler("obsidian_update_note", (args) => vaultService.updateNote(args.path, args.content, args.expectedRevision)));
-  server.tool("obsidian_move_note", "Moves or renames a note within the vault", Schemas.MoveNoteSchema.shape, wrapHandler("obsidian_move_note", (args) => vaultService.moveNote(args.sourcePath, args.targetPath)));
-  server.tool("obsidian_delete_note", "Deletes or moves a note to the vault trash with revision check", Schemas.DeleteNoteSchema.shape, wrapHandler("obsidian_delete_note", (args) => vaultService.deleteNote(args.path, args.permanent, args.expectedRevision)));
+
+  // Conditionally register destructive tools based on configuration
+  if (!config || config.ENABLE_DESTRUCTIVE_TOOLS !== false) {
+    server.tool("obsidian_move_note", "Moves or renames a note within the vault with revision check", Schemas.MoveNoteSchema.shape, wrapHandler("obsidian_move_note", (args) => vaultService.moveNote(args.sourcePath, args.targetPath, args.expectedRevision)));
+    server.tool("obsidian_delete_note", "Deletes or moves a note to the vault trash with revision check", Schemas.DeleteNoteSchema.shape, wrapHandler("obsidian_delete_note", (args) => vaultService.deleteNote(args.path, args.permanent, args.expectedRevision)));
+  }
 
   // 3. Search Domain
   server.tool("obsidian_search", "Performs full-text vault search returning file matches and line numbers", Schemas.SearchSchema.shape, wrapHandler("obsidian_search", (args) => vaultService.search(args.query, args.limit)));
@@ -92,8 +98,8 @@ export function registerTools(
 
   // 4. Daily Notes Domain
   server.tool("obsidian_read_daily_note", "Reads today's or a specific date's daily note", Schemas.ReadDailyNoteSchema.shape, wrapHandler("obsidian_read_daily_note", (args) => vaultService.readDailyNote(args.date)));
-  server.tool("obsidian_append_daily_note", "Appends a work item or note to the daily note", Schemas.AppendDailyNoteSchema.shape, wrapHandler("obsidian_append_daily_note", (args) => vaultService.appendDailyNote(args.content, args.date)));
-  server.tool("obsidian_prepend_daily_note", "Prepends text to the daily note", Schemas.PrependDailyNoteSchema.shape, wrapHandler("obsidian_prepend_daily_note", (args) => vaultService.prependDailyNote(args.content, args.date)));
+  server.tool("obsidian_append_daily_note", "Appends a work item or note to the daily note with revision check", Schemas.AppendDailyNoteSchema.shape, wrapHandler("obsidian_append_daily_note", (args) => vaultService.appendDailyNote(args.content, args.date, args.expectedRevision)));
+  server.tool("obsidian_prepend_daily_note", "Prepends text to the daily note with revision check", Schemas.PrependDailyNoteSchema.shape, wrapHandler("obsidian_prepend_daily_note", (args) => vaultService.prependDailyNote(args.content, args.date, args.expectedRevision)));
 
   // 5. Properties Domain
   server.tool("obsidian_get_properties", "Retrieves all frontmatter properties of a note", Schemas.GetPropertiesSchema.shape, wrapHandler("obsidian_get_properties", (args) => vaultService.getProperties(args.path)));
@@ -103,7 +109,7 @@ export function registerTools(
 
   // 6. Tasks Domain
   server.tool("obsidian_list_tasks", "Lists pending or completed tasks vault-wide or in a note", Schemas.ListTasksSchema.shape, wrapHandler("obsidian_list_tasks", (args) => vaultService.listTasks(args.path, args.status)));
-  server.tool("obsidian_toggle_task", "Toggles the completion checkbox on a specific line of a note", Schemas.ToggleTaskSchema.shape, wrapHandler("obsidian_toggle_task", (args) => vaultService.toggleTask(args.path, args.line)));
+  server.tool("obsidian_toggle_task", "Toggles the completion checkbox on a specific line of a note with verification", Schemas.ToggleTaskSchema.shape, wrapHandler("obsidian_toggle_task", (args) => vaultService.toggleTask(args.path, args.line, args.expectedRevision, args.expectedText)));
 
   // 7. Graph & Links Domain
   server.tool("obsidian_get_backlinks", "Lists all incoming links referencing a target note", Schemas.GetBacklinksSchema.shape, wrapHandler("obsidian_get_backlinks", (args) => vaultService.getBacklinks(args.path)));
@@ -121,9 +127,14 @@ export function registerTools(
   // 9. Context & Intelligence Domain
   server.tool(
     "obsidian_get_note_context",
-    "Retrieves full note context (content, frontmatter, headings, backlinks, and related notes) in a single request",
+    "Retrieves full note context (content, frontmatter, headings, backlinks, and related notes) with budget options",
     Schemas.GetNoteContextSchema.shape,
-    wrapHandler("obsidian_get_note_context", (args) => vaultService.getNoteContext(args.path))
+    wrapHandler("obsidian_get_note_context", (args) =>
+      vaultService.getNoteContext(args.path, {
+        include: args.include,
+        maxRelatedNotes: args.maxRelatedNotes,
+      })
+    )
   );
   server.tool(
     "obsidian_find_notes",
@@ -138,6 +149,8 @@ export function registerTools(
     wrapHandler("obsidian_recent_changes", (args) => vaultService.recentChanges(args))
   );
 
-  // 10. Escape Hatch (Gated behind vault:developer)
-  server.tool("obsidian_cli", "Controlled execution of allowlisted Obsidian CLI commands", Schemas.ObsidianCliSchema.shape, wrapHandler("obsidian_cli", (args) => vaultService.executeCli(args.command, args.args)));
+  // 10. Escape Hatch (Gated behind ENABLE_ADVANCED_CLI and vault:developer scope)
+  if (config?.ENABLE_ADVANCED_CLI === true) {
+    server.tool("obsidian_cli", "Controlled execution of allowlisted Obsidian CLI commands", Schemas.ObsidianCliSchema.shape, wrapHandler("obsidian_cli", (args) => vaultService.executeCli(args.command, args.args)));
+  }
 }

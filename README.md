@@ -59,13 +59,13 @@ Obsidian Remote MCP Server is an enterprise-grade capability runtime connecting 
                │  • Scoped Permission Matrix     │
                │  • Path Traversal Guard         │
                │  • Rate Limiting & Audit Log    │
-               │  • Zod Input/Output Validation  │
+               │  • Zod-validated tool inputs    │
                └────────────────┬────────────────┘
                                 │
           ┌─────────────────────┼─────────────────────┐
           ▼                     ▼                     ▼
      Typed Tools            Resources              Prompts
-     (25 Semantic)       (URI Context)         (Guided Workflows)
+    (28 Semantic)         (URI Context)         (Guided Workflows)
           │                     │                     │
           └─────────────────────┼─────────────────────┘
                                 ▼
@@ -88,19 +88,19 @@ Obsidian Remote MCP Server is an enterprise-grade capability runtime connecting 
 
 ## Feature & Capability Summary
 
-The server exposes 28 strongly-typed semantic tools, 7 direct read resources, and 7 guided prompts:
+The server exposes 28 strongly-typed semantic tools (25 active by default, with destructive tools and CLI gated by feature flags), 7 direct read resources, and 7 guided prompts:
 
 ### Tools (28 Semantic Capabilities)
 - **Vault Domain**: `obsidian_get_vault`, `obsidian_list_files`, `obsidian_get_file_info`
-- **Notes Domain**: `obsidian_read_note`, `obsidian_create_note`, `obsidian_append_note`, `obsidian_prepend_note`, `obsidian_update_note`, `obsidian_move_note`, `obsidian_delete_note` (all with optimistic concurrency support)
+- **Notes Domain**: `obsidian_read_note`, `obsidian_create_note`, `obsidian_append_note`, `obsidian_prepend_note`, `obsidian_update_note`, `obsidian_move_note` (gated by `ENABLE_DESTRUCTIVE_TOOLS`), `obsidian_delete_note` (gated by `ENABLE_DESTRUCTIVE_TOOLS`) — all mutations protected by optimistic concurrency revision checks.
 - **Search Domain**: `obsidian_search`, `obsidian_search_context`
-- **Context & Discovery Domain**: `obsidian_get_note_context`, `obsidian_find_notes`, `obsidian_recent_changes`
+- **Context & Discovery Domain**: `obsidian_get_note_context` (with selective include budget controls), `obsidian_find_notes`, `obsidian_recent_changes`
 - **Daily Notes Domain**: `obsidian_read_daily_note`, `obsidian_append_daily_note`, `obsidian_prepend_daily_note`
 - **Properties Domain**: `obsidian_get_properties`, `obsidian_get_property`, `obsidian_set_property`, `obsidian_remove_property` (structured YAML preservation)
-- **Tasks Domain**: `obsidian_list_tasks`, `obsidian_toggle_task`
+- **Tasks Domain**: `obsidian_list_tasks`, `obsidian_toggle_task` (with revision and line-drift validation)
 - **Knowledge Graph Domain**: `obsidian_get_backlinks`, `obsidian_get_links`, `obsidian_get_orphans`, `obsidian_get_unresolved_links`, `obsidian_get_deadends`
 - **Tags & Bases Domain**: `obsidian_get_tags`, `obsidian_get_tag_notes`, `obsidian_list_bases`, `obsidian_query_base`
-- **Guarded Escape Hatch**: `obsidian_cli` *(strictly allowlisted, gated behind `vault:developer` scope)*
+- **Guarded Escape Hatch**: `obsidian_cli` *(strictly allowlisted, disabled by default, gated by `ENABLE_ADVANCED_CLI=true` and `vault:developer` scope)*
 
 ### Resources (7 Direct Read Contexts)
 - `obsidian://vault`: Vault statistics, file count, and connectivity state.
@@ -315,9 +315,14 @@ BEARER_TOKEN_HASH=<paste_computed_token_hash_here>
 RATE_LIMIT_PER_MINUTE=120
 MAX_SEARCH_RESULTS=50
 COMMAND_TIMEOUT_MS=15000
+ENABLE_DESTRUCTIVE_TOOLS=true
 ENABLE_ADVANCED_CLI=false
 LOG_LEVEL=info
 ```
+
+#### Feature Flag Controls
+- **`ENABLE_DESTRUCTIVE_TOOLS`**: When set to `false`, destructive operations (`obsidian_delete_note` and `obsidian_move_note`) are excluded from MCP registration. Defaults to `true`.
+- **`ENABLE_ADVANCED_CLI`**: When set to `true`, the guarded `obsidian_cli` tool is registered for allowlisted commands (requires `vault:developer` scope). Defaults to `false`.
 
 Set secure permissions on the environment configuration:
 ```bash
@@ -391,24 +396,28 @@ curl https://mcp.yourdomain.com/ready
 
 ## Connecting Remote Clients
 
+The server provides two HTTP transport modes:
+- **Streamable HTTP (`/mcp`)**: Native high-performance streaming transport for modern MCP clients.
+- **Server-Sent Events (`/sse`)**: Dedicated SSE stream transport with `/messages` for legacy MCP clients.
+
 ### Connecting ChatGPT
 
-1. In ChatGPT, open **Explore GPTs** &rarr; **Create a GPT** (or go to **Actions**).
-2. For remote MCP connections or Custom Actions, configure the endpoint:
-   - **URL**: `https://mcp.yourdomain.com/sse`
+1. In ChatGPT, open **Explore GPTs** &rarr; **Create a GPT** (or configure **Custom Actions**).
+2. For remote MCP connections, configure the endpoint:
+   - **URL**: `https://mcp.yourdomain.com/sse` (or `/mcp` for Streamable HTTP clients)
    - **Authentication**: `Bearer`
    - **Token**: `<your_raw_bearer_token>`
-3. ChatGPT will discover all 25 tools via the MCP protocol and display them under capabilities.
+3. ChatGPT will discover all active semantic tools via the MCP protocol and display them under capabilities.
 
 ### Connecting Remote Claude
 
-Add the remote server to Claude Desktop via SSE:
+Add the remote server to Claude Desktop via Streamable HTTP (`/mcp`) or SSE (`/sse`):
 
 ```json
 {
   "mcpServers": {
     "obsidian-remote": {
-      "url": "https://mcp.yourdomain.com/sse",
+      "url": "https://mcp.yourdomain.com/mcp",
       "headers": {
         "Authorization": "Bearer <your_raw_bearer_token>"
       }
@@ -416,6 +425,8 @@ Add the remote server to Claude Desktop via SSE:
   }
 }
 ```
+
+*(For legacy Claude clients requiring SSE, use `https://mcp.yourdomain.com/sse`)*
 
 ### Connecting Hermes Agent (Nous Research)
 

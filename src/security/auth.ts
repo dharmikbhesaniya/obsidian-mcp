@@ -15,17 +15,11 @@ export const authStorage = new AsyncLocalStorage<AuthContext>();
 export function getCurrentAuthContext(): AuthContext {
   const ctx = authStorage.getStore();
   if (ctx) return ctx;
-  return {
-    clientId: "local-user",
-    scopes: [
-      Scope.VAULT_READ,
-      Scope.VAULT_WRITE,
-      Scope.VAULT_DELETE,
-      Scope.VAULT_ADMIN,
-      Scope.VAULT_DEVELOPER,
-    ],
-    authenticated: true,
-  };
+  throw new ObsidianMcpError(
+    ErrorCode.AUTH_REQUIRED,
+    "Unauthenticated request context: no authorization context established.",
+    401
+  );
 }
 
 export class AuthManager {

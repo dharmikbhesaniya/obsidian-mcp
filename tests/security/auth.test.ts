@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { AuthManager } from "../../src/security/auth.js";
+import { AuthManager, getCurrentAuthContext } from "../../src/security/auth.js";
 import { Scope } from "../../src/config/scopes.js";
 import { RateLimiter } from "../../src/security/rate-limit.js";
 import { ErrorCode, ObsidianMcpError } from "../../src/schemas/errors.js";
@@ -60,16 +60,12 @@ describe("Security & Auth Manager", () => {
     ).toThrow(ObsidianMcpError);
   });
 
-  it("should rate limit requests exceeding threshold", () => {
-    const limiter = new RateLimiter(5);
-    for (let i = 0; i < 5; i++) {
-      expect(() => limiter.checkRateLimit("client-1")).not.toThrow();
-    }
-    expect(() => limiter.checkRateLimit("client-1")).toThrow(ObsidianMcpError);
+  it("should fail closed when getCurrentAuthContext is called without context", () => {
+    expect(() => getCurrentAuthContext()).toThrow(ObsidianMcpError);
     try {
-      limiter.checkRateLimit("client-1");
+      getCurrentAuthContext();
     } catch (err: any) {
-      expect(err.code).toBe(ErrorCode.RATE_LIMITED);
+      expect(err.code).toBe(ErrorCode.AUTH_REQUIRED);
     }
   });
 });

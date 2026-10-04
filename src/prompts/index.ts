@@ -3,9 +3,12 @@ import { z } from "zod";
 
 export function registerPrompts(server: McpServer) {
   // 1. daily-work-report
-  server.prompt(
+  server.registerPrompt(
     "daily-work-report",
-    { date: z.string().optional().describe("Date in YYYY-MM-DD format (defaults to today)") },
+    {
+      description: "Generates a structured daily work report from the daily note and tasks",
+      argsSchema: { date: z.string().optional().describe("Date in YYYY-MM-DD format (defaults to today)") },
+    },
     ({ date }) => ({
       messages: [
         {
@@ -20,9 +23,12 @@ export function registerPrompts(server: McpServer) {
   );
 
   // 2. knowledge-capture
-  server.prompt(
+  server.registerPrompt(
     "knowledge-capture",
-    { sourceNote: z.string().describe("Relative path of the source note to extract knowledge from") },
+    {
+      description: "Extracts permanent architectural lessons and decisions from a note into 03-Knowledge/",
+      argsSchema: { sourceNote: z.string().describe("Relative path of the source note to extract knowledge from") },
+    },
     ({ sourceNote }) => ({
       messages: [
         {
@@ -37,9 +43,11 @@ export function registerPrompts(server: McpServer) {
   );
 
   // 3. weekly-review
-  server.prompt(
+  server.registerPrompt(
     "weekly-review",
-    {},
+    {
+      description: "Conducts a weekly review across tasks, project progress, and priorities",
+    },
     () => ({
       messages: [
         {
@@ -54,9 +62,12 @@ export function registerPrompts(server: McpServer) {
   );
 
   // 4. monthly-review
-  server.prompt(
+  server.registerPrompt(
     "monthly-review",
-    { month: z.string().optional().describe("Month in YYYY-MM format") },
+    {
+      description: "Conducts a high-level monthly retrospective across vault deliverables",
+      argsSchema: { month: z.string().optional().describe("Month in YYYY-MM format") },
+    },
     ({ month }) => ({
       messages: [
         {
@@ -71,9 +82,12 @@ export function registerPrompts(server: McpServer) {
   );
 
   // 5. project-review
-  server.prompt(
+  server.registerPrompt(
     "project-review",
-    { projectPath: z.string().describe("Relative path of the project note or folder") },
+    {
+      description: "Evaluates project status, related tasks, backlinks, and milestone state",
+      argsSchema: { projectPath: z.string().describe("Relative path of the project note or folder") },
+    },
     ({ projectPath }) => ({
       messages: [
         {
@@ -88,9 +102,12 @@ export function registerPrompts(server: McpServer) {
   );
 
   // 6. meeting-summary
-  server.prompt(
+  server.registerPrompt(
     "meeting-summary",
-    { meetingNote: z.string().describe("Relative path of the raw meeting note") },
+    {
+      description: "Extracts action items and decision records from raw meeting notes",
+      argsSchema: { meetingNote: z.string().describe("Relative path of the raw meeting note") },
+    },
     ({ meetingNote }) => ({
       messages: [
         {
@@ -105,9 +122,11 @@ export function registerPrompts(server: McpServer) {
   );
 
   // 7. vault-health-check
-  server.prompt(
+  server.registerPrompt(
     "vault-health-check",
-    {},
+    {
+      description: "Audits vault hygiene for broken wikilinks and orphan notes",
+    },
     () => ({
       messages: [
         {

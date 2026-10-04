@@ -75,60 +75,62 @@ export function registerTools(
   };
 
   // 1. Vault Domain
-  server.tool("obsidian_get_vault", "Returns vault metadata, file counts, and connectivity status", Schemas.GetVaultSchema.shape, wrapHandler("obsidian_get_vault", () => vaultService.getVault()));
-  server.tool("obsidian_list_files", "Lists files and subdirectories under a vault folder", Schemas.ListFilesSchema.shape, wrapHandler("obsidian_list_files", (args) => vaultService.listFiles(args.folder, args.recursive)));
-  server.tool("obsidian_get_file_info", "Retrieves size, modification timestamp, and metadata of a file", Schemas.GetFileInfoSchema.shape, wrapHandler("obsidian_get_file_info", (args) => vaultService.getFileInfo(args.path)));
+  server.registerTool("obsidian_get_vault", { description: "Returns vault metadata, file counts, and connectivity status", inputSchema: Schemas.GetVaultSchema.shape }, wrapHandler("obsidian_get_vault", () => vaultService.getVault()));
+  server.registerTool("obsidian_list_files", { description: "Lists files and subdirectories under a vault folder", inputSchema: Schemas.ListFilesSchema.shape }, wrapHandler("obsidian_list_files", (args) => vaultService.listFiles(args.folder, args.recursive)));
+  server.registerTool("obsidian_get_file_info", { description: "Retrieves size, modification timestamp, and metadata of a file", inputSchema: Schemas.GetFileInfoSchema.shape }, wrapHandler("obsidian_get_file_info", (args) => vaultService.getFileInfo(args.path)));
 
   // 2. Notes Domain
-  server.tool("obsidian_read_note", "Reads the full content and frontmatter of a vault note", Schemas.ReadNoteSchema.shape, wrapHandler("obsidian_read_note", (args) => vaultService.readNote(args.path)));
-  server.tool("obsidian_create_note", "Creates a new note with optional template", Schemas.CreateNoteSchema.shape, wrapHandler("obsidian_create_note", (args) => vaultService.createNote(args.path, args.content, args.template, args.overwrite)));
-  server.tool("obsidian_append_note", "Appends text content to an existing note with revision check", Schemas.AppendNoteSchema.shape, wrapHandler("obsidian_append_note", (args) => vaultService.appendNote(args.path, args.content, args.ensureNewline, args.expectedRevision)));
-  server.tool("obsidian_prepend_note", "Prepends text content below frontmatter in an existing note with revision check", Schemas.PrependNoteSchema.shape, wrapHandler("obsidian_prepend_note", (args) => vaultService.prependNote(args.path, args.content, args.expectedRevision)));
-  server.tool("obsidian_update_note", "Updates note content with optimistic revision control", Schemas.UpdateNoteSchema.shape, wrapHandler("obsidian_update_note", (args) => vaultService.updateNote(args.path, args.content, args.expectedRevision)));
+  server.registerTool("obsidian_read_note", { description: "Reads the full content and frontmatter of a vault note", inputSchema: Schemas.ReadNoteSchema.shape }, wrapHandler("obsidian_read_note", (args) => vaultService.readNote(args.path)));
+  server.registerTool("obsidian_create_note", { description: "Creates a new note with optional template", inputSchema: Schemas.CreateNoteSchema.shape }, wrapHandler("obsidian_create_note", (args) => vaultService.createNote(args.path, args.content, args.template, args.overwrite)));
+  server.registerTool("obsidian_append_note", { description: "Appends text content to an existing note with revision check", inputSchema: Schemas.AppendNoteSchema.shape }, wrapHandler("obsidian_append_note", (args) => vaultService.appendNote(args.path, args.content, args.ensureNewline, args.expectedRevision)));
+  server.registerTool("obsidian_prepend_note", { description: "Prepends text content below frontmatter in an existing note with revision check", inputSchema: Schemas.PrependNoteSchema.shape }, wrapHandler("obsidian_prepend_note", (args) => vaultService.prependNote(args.path, args.content, args.expectedRevision)));
+  server.registerTool("obsidian_update_note", { description: "Updates note content with optimistic revision control", inputSchema: Schemas.UpdateNoteSchema.shape }, wrapHandler("obsidian_update_note", (args) => vaultService.updateNote(args.path, args.content, args.expectedRevision)));
 
   // Conditionally register destructive tools based on configuration
   if (!config || config.ENABLE_DESTRUCTIVE_TOOLS !== false) {
-    server.tool("obsidian_move_note", "Moves or renames a note within the vault with revision check", Schemas.MoveNoteSchema.shape, wrapHandler("obsidian_move_note", (args) => vaultService.moveNote(args.sourcePath, args.targetPath, args.expectedRevision)));
-    server.tool("obsidian_delete_note", "Deletes or moves a note to the vault trash with revision check", Schemas.DeleteNoteSchema.shape, wrapHandler("obsidian_delete_note", (args) => vaultService.deleteNote(args.path, args.permanent, args.expectedRevision)));
+    server.registerTool("obsidian_move_note", { description: "Moves or renames a note within the vault with revision check", inputSchema: Schemas.MoveNoteSchema.shape }, wrapHandler("obsidian_move_note", (args) => vaultService.moveNote(args.sourcePath, args.targetPath, args.expectedRevision)));
+    server.registerTool("obsidian_delete_note", { description: "Deletes or moves a note to the vault trash with revision check", inputSchema: Schemas.DeleteNoteSchema.shape }, wrapHandler("obsidian_delete_note", (args) => vaultService.deleteNote(args.path, args.permanent, args.expectedRevision)));
   }
 
   // 3. Search Domain
-  server.tool("obsidian_search", "Performs full-text vault search returning file matches and line numbers", Schemas.SearchSchema.shape, wrapHandler("obsidian_search", (args) => vaultService.search(args.query, args.limit)));
-  server.tool("obsidian_search_context", "Performs full-text vault search returning contextual lines around matches", Schemas.SearchContextSchema.shape, wrapHandler("obsidian_search_context", (args) => vaultService.searchContext(args.query, args.contextLines, args.limit)));
+  server.registerTool("obsidian_search", { description: "Performs full-text vault search returning file matches and line numbers", inputSchema: Schemas.SearchSchema.shape }, wrapHandler("obsidian_search", (args) => vaultService.search(args.query, args.limit)));
+  server.registerTool("obsidian_search_context", { description: "Performs full-text vault search returning contextual lines around matches", inputSchema: Schemas.SearchContextSchema.shape }, wrapHandler("obsidian_search_context", (args) => vaultService.searchContext(args.query, args.contextLines, args.limit)));
 
   // 4. Daily Notes Domain
-  server.tool("obsidian_read_daily_note", "Reads today's or a specific date's daily note", Schemas.ReadDailyNoteSchema.shape, wrapHandler("obsidian_read_daily_note", (args) => vaultService.readDailyNote(args.date)));
-  server.tool("obsidian_append_daily_note", "Appends a work item or note to the daily note with revision check", Schemas.AppendDailyNoteSchema.shape, wrapHandler("obsidian_append_daily_note", (args) => vaultService.appendDailyNote(args.content, args.date, args.expectedRevision)));
-  server.tool("obsidian_prepend_daily_note", "Prepends text to the daily note with revision check", Schemas.PrependDailyNoteSchema.shape, wrapHandler("obsidian_prepend_daily_note", (args) => vaultService.prependDailyNote(args.content, args.date, args.expectedRevision)));
+  server.registerTool("obsidian_read_daily_note", { description: "Reads today's or a specific date's daily note", inputSchema: Schemas.ReadDailyNoteSchema.shape }, wrapHandler("obsidian_read_daily_note", (args) => vaultService.readDailyNote(args.date)));
+  server.registerTool("obsidian_append_daily_note", { description: "Appends a work item or note to the daily note with revision check", inputSchema: Schemas.AppendDailyNoteSchema.shape }, wrapHandler("obsidian_append_daily_note", (args) => vaultService.appendDailyNote(args.content, args.date, args.expectedRevision)));
+  server.registerTool("obsidian_prepend_daily_note", { description: "Prepends text to the daily note with revision check", inputSchema: Schemas.PrependDailyNoteSchema.shape }, wrapHandler("obsidian_prepend_daily_note", (args) => vaultService.prependDailyNote(args.content, args.date, args.expectedRevision)));
 
   // 5. Properties Domain
-  server.tool("obsidian_get_properties", "Retrieves all frontmatter properties of a note", Schemas.GetPropertiesSchema.shape, wrapHandler("obsidian_get_properties", (args) => vaultService.getProperties(args.path)));
-  server.tool("obsidian_get_property", "Retrieves a specific frontmatter property value", Schemas.GetPropertySchema.shape, wrapHandler("obsidian_get_property", (args) => vaultService.getProperty(args.path, args.name)));
-  server.tool("obsidian_set_property", "Sets or updates a frontmatter property with structured types and revision check", Schemas.SetPropertySchema.shape, wrapHandler("obsidian_set_property", (args) => vaultService.setProperty(args.path, args.name, args.value, args.expectedRevision)));
-  server.tool("obsidian_remove_property", "Removes a frontmatter property from a note with revision check", Schemas.RemovePropertySchema.shape, wrapHandler("obsidian_remove_property", (args) => vaultService.removeProperty(args.path, args.name, args.expectedRevision)));
+  server.registerTool("obsidian_get_properties", { description: "Retrieves all frontmatter properties of a note", inputSchema: Schemas.GetPropertiesSchema.shape }, wrapHandler("obsidian_get_properties", (args) => vaultService.getProperties(args.path)));
+  server.registerTool("obsidian_get_property", { description: "Retrieves a specific frontmatter property value", inputSchema: Schemas.GetPropertySchema.shape }, wrapHandler("obsidian_get_property", (args) => vaultService.getProperty(args.path, args.name)));
+  server.registerTool("obsidian_set_property", { description: "Sets or updates a frontmatter property with structured types and revision check", inputSchema: Schemas.SetPropertySchema.shape }, wrapHandler("obsidian_set_property", (args) => vaultService.setProperty(args.path, args.name, args.value, args.expectedRevision)));
+  server.registerTool("obsidian_remove_property", { description: "Removes a frontmatter property from a note with revision check", inputSchema: Schemas.RemovePropertySchema.shape }, wrapHandler("obsidian_remove_property", (args) => vaultService.removeProperty(args.path, args.name, args.expectedRevision)));
 
   // 6. Tasks Domain
-  server.tool("obsidian_list_tasks", "Lists pending or completed tasks vault-wide or in a note", Schemas.ListTasksSchema.shape, wrapHandler("obsidian_list_tasks", (args) => vaultService.listTasks(args.path, args.status)));
-  server.tool("obsidian_toggle_task", "Toggles the completion checkbox on a specific line of a note with verification", Schemas.ToggleTaskSchema.shape, wrapHandler("obsidian_toggle_task", (args) => vaultService.toggleTask(args.path, args.line, args.expectedRevision, args.expectedText)));
+  server.registerTool("obsidian_list_tasks", { description: "Lists pending or completed tasks vault-wide or in a note", inputSchema: Schemas.ListTasksSchema.shape }, wrapHandler("obsidian_list_tasks", (args) => vaultService.listTasks(args.path, args.status)));
+  server.registerTool("obsidian_toggle_task", { description: "Toggles the completion checkbox on a specific line of a note with verification", inputSchema: Schemas.ToggleTaskSchema.shape }, wrapHandler("obsidian_toggle_task", (args) => vaultService.toggleTask(args.path, args.line, args.expectedRevision, args.expectedText)));
 
   // 7. Graph & Links Domain
-  server.tool("obsidian_get_backlinks", "Lists all incoming links referencing a target note", Schemas.GetBacklinksSchema.shape, wrapHandler("obsidian_get_backlinks", (args) => vaultService.getBacklinks(args.path)));
-  server.tool("obsidian_get_links", "Lists all outgoing internal links within a note", Schemas.GetLinksSchema.shape, wrapHandler("obsidian_get_links", (args) => vaultService.getLinks(args.path)));
-  server.tool("obsidian_get_orphans", "Discovers orphaned notes that have no internal links", Schemas.GetOrphansSchema.shape, wrapHandler("obsidian_get_orphans", () => vaultService.getOrphans()));
-  server.tool("obsidian_get_unresolved_links", "Lists broken internal wikilinks pointing to non-existent notes", Schemas.GetUnresolvedLinksSchema.shape, wrapHandler("obsidian_get_unresolved_links", () => vaultService.getUnresolvedLinks()));
-  server.tool("obsidian_get_deadends", "Lists notes with incoming links but zero outgoing links", Schemas.GetDeadendsSchema.shape, wrapHandler("obsidian_get_deadends", () => vaultService.getDeadends()));
+  server.registerTool("obsidian_get_backlinks", { description: "Lists all incoming links referencing a target note", inputSchema: Schemas.GetBacklinksSchema.shape }, wrapHandler("obsidian_get_backlinks", (args) => vaultService.getBacklinks(args.path)));
+  server.registerTool("obsidian_get_links", { description: "Lists all outgoing internal links within a note", inputSchema: Schemas.GetLinksSchema.shape }, wrapHandler("obsidian_get_links", (args) => vaultService.getLinks(args.path)));
+  server.registerTool("obsidian_get_orphans", { description: "Discovers orphaned notes that have no internal links", inputSchema: Schemas.GetOrphansSchema.shape }, wrapHandler("obsidian_get_orphans", () => vaultService.getOrphans()));
+  server.registerTool("obsidian_get_unresolved_links", { description: "Lists broken internal wikilinks pointing to non-existent notes", inputSchema: Schemas.GetUnresolvedLinksSchema.shape }, wrapHandler("obsidian_get_unresolved_links", () => vaultService.getUnresolvedLinks()));
+  server.registerTool("obsidian_get_deadends", { description: "Lists notes with incoming links but zero outgoing links", inputSchema: Schemas.GetDeadendsSchema.shape }, wrapHandler("obsidian_get_deadends", () => vaultService.getDeadends()));
 
   // 8. Tags & Bases Domain
-  server.tool("obsidian_get_tags", "Returns all tags and their occurrence counts", Schemas.GetTagsSchema.shape, wrapHandler("obsidian_get_tags", () => vaultService.getTags()));
-  server.tool("obsidian_get_tag_notes", "Retrieves all notes tagged with a specific tag", Schemas.GetTagNotesSchema.shape, wrapHandler("obsidian_get_tag_notes", (args) => vaultService.getTagNotes(args.tag)));
-  server.tool("obsidian_list_bases", "Lists all .base database schema files in the vault", Schemas.ListBasesSchema.shape, wrapHandler("obsidian_list_bases", () => vaultService.listBases()));
-  server.tool("obsidian_query_base", "Queries a .base database view", Schemas.QueryBaseSchema.shape, wrapHandler("obsidian_query_base", (args) => vaultService.queryBase(args.path, args.view)));
+  server.registerTool("obsidian_get_tags", { description: "Returns all tags and their occurrence counts", inputSchema: Schemas.GetTagsSchema.shape }, wrapHandler("obsidian_get_tags", () => vaultService.getTags()));
+  server.registerTool("obsidian_get_tag_notes", { description: "Retrieves all notes tagged with a specific tag", inputSchema: Schemas.GetTagNotesSchema.shape }, wrapHandler("obsidian_get_tag_notes", (args) => vaultService.getTagNotes(args.tag)));
+  server.registerTool("obsidian_list_bases", { description: "Lists all .base database schema files in the vault", inputSchema: Schemas.ListBasesSchema.shape }, wrapHandler("obsidian_list_bases", () => vaultService.listBases()));
+  server.registerTool("obsidian_query_base", { description: "Queries a .base database view", inputSchema: Schemas.QueryBaseSchema.shape }, wrapHandler("obsidian_query_base", (args) => vaultService.queryBase(args.path, args.view)));
 
   // 9. Context & Intelligence Domain
-  server.tool(
+  server.registerTool(
     "obsidian_get_note_context",
-    "Retrieves full note context (content, frontmatter, headings, backlinks, and related notes) with budget options",
-    Schemas.GetNoteContextSchema.shape,
+    {
+      description: "Retrieves full note context (content, frontmatter, headings, backlinks, and related notes) with budget options",
+      inputSchema: Schemas.GetNoteContextSchema.shape,
+    },
     wrapHandler("obsidian_get_note_context", (args) =>
       vaultService.getNoteContext(args.path, {
         include: args.include,
@@ -136,21 +138,32 @@ export function registerTools(
       })
     )
   );
-  server.tool(
+  server.registerTool(
     "obsidian_find_notes",
-    "Multi-criteria note discovery by title, tag, folder, property, or content query",
-    Schemas.FindNotesSchema.shape,
+    {
+      description: "Multi-criteria note discovery by title, tag, folder, property, or content query",
+      inputSchema: Schemas.FindNotesSchema.shape,
+    },
     wrapHandler("obsidian_find_notes", (args) => vaultService.findNotes(args))
   );
-  server.tool(
+  server.registerTool(
     "obsidian_recent_changes",
-    "Lists notes recently modified or created within the vault for change awareness",
-    Schemas.RecentChangesSchema.shape,
+    {
+      description: "Lists notes recently modified or created within the vault for change awareness",
+      inputSchema: Schemas.RecentChangesSchema.shape,
+    },
     wrapHandler("obsidian_recent_changes", (args) => vaultService.recentChanges(args))
   );
 
   // 10. Escape Hatch (Gated behind ENABLE_ADVANCED_CLI and vault:developer scope)
   if (config?.ENABLE_ADVANCED_CLI === true) {
-    server.tool("obsidian_cli", "Controlled execution of allowlisted Obsidian CLI commands", Schemas.ObsidianCliSchema.shape, wrapHandler("obsidian_cli", (args) => vaultService.executeCli(args.command, args.args)));
+    server.registerTool(
+      "obsidian_cli",
+      {
+        description: "Controlled execution of allowlisted Obsidian CLI commands",
+        inputSchema: Schemas.ObsidianCliSchema.shape,
+      },
+      wrapHandler("obsidian_cli", (args) => vaultService.executeCli(args.command, args.args))
+    );
   }
 }

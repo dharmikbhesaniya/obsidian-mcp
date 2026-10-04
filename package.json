@@ -4,13 +4,36 @@
   "description": "Secure, typed Model Context Protocol (MCP) server for remote Obsidian knowledge systems",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "obsidian-mcp": "./dist/index.js"
+  },
   "type": "module",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dharmikbhesaniya/obsidian-mcp.git"
+  },
+  "homepage": "https://github.com/dharmikbhesaniya/obsidian-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/dharmikbhesaniya/obsidian-mcp/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/index.js",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "prepublishOnly": "npm run build && npm test",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src/ --ext .ts"

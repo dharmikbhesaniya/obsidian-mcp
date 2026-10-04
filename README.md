@@ -499,6 +499,42 @@ Every failure returns structured error payloads:
 
 ---
 
+## NPM Package Distribution
+
+The package is configured for direct zero-install execution via `npx` or standard installation via `npm`:
+
+```bash
+# Execute directly without cloning or building
+OBSIDIAN_VAULT_PATH="/path/to/vault" npx -y obsidian-mcp
+
+# Or install globally
+npm install -g obsidian-mcp
+```
+
+### Publishing to NPM
+
+1. **Verify Tarball Contents**:
+   ```bash
+   npm pack --dry-run
+   ```
+   Only `dist/`, `package.json`, `README.md`, and `LICENSE` are packaged.
+
+2. **Authenticate with NPM**:
+   ```bash
+   npm login
+   ```
+
+3. **Publishing Manually**:
+   ```bash
+   # Automatically executes prepublishOnly (runs build and tests)
+   npm publish --access public
+   ```
+
+4. **Automated Publishing via GitHub Actions**:
+   Create a new release or tag on GitHub (`v0.1.0`). The workflow in `.github/workflows/publish.yml` will automatically build, test, and publish the package to the NPM registry using the repository's `NPM_TOKEN` secret.
+
+---
+
 ## License
 
 MIT License. See [LICENSE](LICENSE) for full details.

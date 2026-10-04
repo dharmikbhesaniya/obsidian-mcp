@@ -2,8 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { PathGuard } from "../security/path-guard.js";
+import { AtomicFs } from "../security/atomic-fs.js";
+import { TrashManager } from "../security/trash.js";
 import { ObsidianCliAdapter } from "../adapters/obsidian/cli.adapter.js";
 import { ErrorCode, ObsidianMcpError } from "../schemas/errors.js";
+import { BM25Engine, DocumentItem } from "../search/bm25.js";
 import {
   parseNoteContent,
   setFrontmatterProperty,
@@ -28,13 +31,28 @@ export const ALLOWED_CLI_COMMANDS = new Set([
   "daily:read",
 ]);
 
+export function stripObsidianComments(content: string): string {
+  return content.replace(/%%[\s\S]*?%%/g, "");
+}
+
 export class VaultService {
   private readonly pathGuard: PathGuard;
   private readonly cliAdapter: ObsidianCliAdapter;
+  private readonly trashManager: TrashManager;
 
-  constructor(pathGuard: PathGuard, cliAdapter: ObsidianCliAdapter) {
+  constructor(pathGuard: PathGuard, cliAdapter: ObsidianCliAdapter, trashManager?: TrashManager) {
     this.pathGuard = pathGuard;
     this.cliAdapter = cliAdapter;
+    this.trashManager = trashManager ?? new TrashManager(pathGuard.getVaultRoot());
+  }
+
+  public getTrashManager(): TrashManager {
+    return this.trashManager;
+  }
+
+  public getObsidianUri(relativePath: string): string {
+    const vaultName = path.basename(this.pathGuard.getVaultRoot());
+    return `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(relativePath)}`;
   }
 
   // --- VAULT DOMAIN ---
@@ -112,21 +130,24 @@ export class VaultService {
 
   // --- NOTES DOMAIN ---
 
-  public async readNote(targetPath: string) {
+  public async readNote(targetPath: string, stripComments: boolean = false) {
     const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
 
-    const content = fs.readFileSync(absolutePath, "utf-8");
-    const revision = crypto.createHash("sha1").update(content).digest("hex");
+    const rawContent = fs.readFileSync(absolutePath, "utf-8");
+    const revision = crypto.createHash("sha1").update(rawContent).digest("hex");
+    const content = stripComments ? stripObsidianComments(rawContent) : rawContent;
     const parsed = parseNoteContent(content);
 
     return {
       path: relativePath,
       content,
       revision,
+      etag: revision,
       frontmatter: parsed.frontmatter,
+      obsidianUri: this.getObsidianUri(relativePath),
     };
   }
 
@@ -149,13 +170,22 @@ export class VaultService {
       if (template) args.push(`template=${template}`);
       await this.cliAdapter.execute("create", args);
       if (content) {
-        fs.writeFileSync(absolutePath, content, "utf-8");
+        AtomicFs.writeFileSync(absolutePath, content, "utf-8");
       }
     } catch {
-      fs.writeFileSync(absolutePath, content, "utf-8");
+      AtomicFs.writeFileSync(absolutePath, content, "utf-8");
     }
 
-    return { path: relativePath, created: true };
+    const finalContent = fs.existsSync(absolutePath) ? fs.readFileSync(absolutePath, "utf-8") : content;
+    const revision = crypto.createHash("sha1").update(finalContent).digest("hex");
+
+    return {
+      path: relativePath,
+      created: true,
+      revision,
+      etag: revision,
+      obsidianUri: this.getObsidianUri(relativePath),
+    };
   }
 
   public async appendNote(targetPath: string, content: string, ensureNewline: boolean = true, expectedRevision?: string) {
@@ -177,11 +207,17 @@ export class VaultService {
     }
 
     const toAppend = ensureNewline && !existing.endsWith("\n") ? `\n${content}` : content;
-    fs.appendFileSync(absolutePath, toAppend, "utf-8");
     const newContent = existing + toAppend;
+    AtomicFs.writeFileSync(absolutePath, newContent, "utf-8");
     const newRevision = crypto.createHash("sha1").update(newContent).digest("hex");
 
-    return { path: relativePath, appended: true, newRevision };
+    return {
+      path: relativePath,
+      appended: true,
+      newRevision,
+      etag: newRevision,
+      obsidianUri: this.getObsidianUri(relativePath),
+    };
   }
 
   public async prependNote(targetPath: string, content: string, expectedRevision?: string) {
@@ -213,9 +249,15 @@ export class VaultService {
       updated = `${content}\n\n${existing}`;
     }
 
-    fs.writeFileSync(absolutePath, updated, "utf-8");
+    AtomicFs.writeFileSync(absolutePath, updated, "utf-8");
     const newRevision = crypto.createHash("sha1").update(updated).digest("hex");
-    return { path: relativePath, prepended: true, newRevision };
+    return {
+      path: relativePath,
+      prepended: true,
+      newRevision,
+      etag: newRevision,
+      obsidianUri: this.getObsidianUri(relativePath),
+    };
   }
 
   public async updateNote(targetPath: string, content: string, expectedRevision?: string) {
@@ -236,17 +278,180 @@ export class VaultService {
       );
     }
 
-    fs.writeFileSync(absolutePath, content, "utf-8");
+    AtomicFs.writeFileSync(absolutePath, content, "utf-8");
     const newRevision = crypto.createHash("sha1").update(content).digest("hex");
 
     return {
       path: relativePath,
       updated: true,
       newRevision,
+      etag: newRevision,
+      obsidianUri: this.getObsidianUri(relativePath),
     };
   }
 
-  public async moveNote(sourcePath: string, targetPath: string, expectedRevision?: string) {
+  public async patchNote(
+    targetPath: string,
+    target: { type: "heading" | "block"; value: string },
+    operation: "replace" | "append" | "prepend",
+    content: string,
+    expectedRevision?: string
+  ) {
+    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+    if (!fs.existsSync(absolutePath)) {
+      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
+    }
+
+    const existingContent = fs.readFileSync(absolutePath, "utf-8");
+    const currentRevision = crypto.createHash("sha1").update(existingContent).digest("hex");
+
+    if (expectedRevision && expectedRevision !== currentRevision) {
+      throw new ObsidianMcpError(
+        ErrorCode.CONFLICT,
+        `Concurrent edit detected on patch. Expected revision '${expectedRevision}' but note is at '${currentRevision}'.`,
+        409,
+        { expectedRevision, actualRevision: currentRevision }
+      );
+    }
+
+    const lines = existingContent.split("\n");
+    let updatedLines: string[] = [];
+
+    if (target.type === "heading") {
+      const cleanTargetHeading = target.value.replace(/^#+\s*/, "").trim().toLowerCase();
+      // Locate the heading line
+      let headingIndex = -1;
+      let headingLevel = 0;
+      let matchedHeadingText = "";
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const match = line.match(/^(#{1,6})\s+(.+)$/);
+        if (match) {
+          const level = match[1].length;
+          const text = match[2].trim();
+          if (text.toLowerCase() === cleanTargetHeading) {
+            headingIndex = i;
+            headingLevel = level;
+            matchedHeadingText = line;
+            break;
+          }
+        }
+      }
+
+      if (headingIndex === -1) {
+        throw new ObsidianMcpError(
+          ErrorCode.NOT_FOUND,
+          `Heading '${target.value}' not found in note '${relativePath}'.`,
+          404
+        );
+      }
+
+      // Find section end: next heading of equal or higher level (<= headingLevel) or EOF
+      let sectionEndIndex = lines.length;
+      for (let i = headingIndex + 1; i < lines.length; i++) {
+        const line = lines[i];
+        const match = line.match(/^(#{1,6})\s+(.+)$/);
+        if (match && match[1].length <= headingLevel) {
+          sectionEndIndex = i;
+          break;
+        }
+      }
+
+      const beforeSection = lines.slice(0, headingIndex);
+      const afterSection = lines.slice(sectionEndIndex);
+      const sectionLines = lines.slice(headingIndex + 1, sectionEndIndex);
+
+      if (operation === "replace") {
+        if (/^#{1,6}\s+/.test(content.trim())) {
+          updatedLines = [...beforeSection, content.trim(), ...(afterSection.length > 0 ? [""] : []), ...afterSection];
+        } else {
+          updatedLines = [...beforeSection, matchedHeadingText, "", content.trim(), ...(afterSection.length > 0 ? [""] : []), ...afterSection];
+        }
+      } else if (operation === "append") {
+        let lastNonEmpty = sectionLines.length - 1;
+        while (lastNonEmpty >= 0 && sectionLines[lastNonEmpty].trim() === "") {
+          lastNonEmpty--;
+        }
+        const trimmedSection = sectionLines.slice(0, lastNonEmpty + 1);
+        updatedLines = [
+          ...beforeSection,
+          matchedHeadingText,
+          ...trimmedSection,
+          "",
+          content.trim(),
+          "",
+          ...afterSection,
+        ];
+      } else if (operation === "prepend") {
+        updatedLines = [
+          ...beforeSection,
+          matchedHeadingText,
+          "",
+          content.trim(),
+          "",
+          ...sectionLines,
+          ...afterSection,
+        ];
+      }
+    } else if (target.type === "block") {
+      const cleanBlockId = target.value.replace(/^\^/, "").trim();
+      const blockPattern = new RegExp(`\\^${cleanBlockId}(\\s|$)`);
+      let blockIndex = -1;
+
+      for (let i = 0; i < lines.length; i++) {
+        if (blockPattern.test(lines[i])) {
+          blockIndex = i;
+          break;
+        }
+      }
+
+      if (blockIndex === -1) {
+        throw new ObsidianMcpError(
+          ErrorCode.NOT_FOUND,
+          `Block ID '^${cleanBlockId}' not found in note '${relativePath}'.`,
+          404
+        );
+      }
+
+      const beforeBlock = lines.slice(0, blockIndex);
+      const targetLine = lines[blockIndex];
+      const afterBlock = lines.slice(blockIndex + 1);
+
+      if (operation === "replace") {
+        let newBlock = content.trim();
+        if (!newBlock.includes(`^${cleanBlockId}`)) {
+          newBlock = `${newBlock} ^${cleanBlockId}`;
+        }
+        updatedLines = [...beforeBlock, newBlock, ...afterBlock];
+      } else if (operation === "append") {
+        updatedLines = [...beforeBlock, targetLine, content.trim(), ...afterBlock];
+      } else if (operation === "prepend") {
+        updatedLines = [...beforeBlock, content.trim(), targetLine, ...afterBlock];
+      }
+    }
+
+    const normalizedContent = updatedLines.join("\n").replace(/\n{3,}/g, "\n\n");
+    AtomicFs.writeFileSync(absolutePath, normalizedContent, "utf-8");
+    const newRevision = crypto.createHash("sha1").update(normalizedContent).digest("hex");
+
+    return {
+      path: relativePath,
+      patched: true,
+      target,
+      operation,
+      newRevision,
+      etag: newRevision,
+      obsidianUri: this.getObsidianUri(relativePath),
+    };
+  }
+
+  public async moveNote(
+    sourcePath: string,
+    targetPath: string,
+    expectedRevision?: string,
+    updateBacklinks: boolean = true
+  ) {
     const src = this.pathGuard.resolveSafePath(sourcePath);
     const dest = this.pathGuard.resolveSafePath(targetPath);
 
@@ -268,14 +473,82 @@ export class VaultService {
       );
     }
 
-    fs.mkdirSync(path.dirname(dest.absolutePath), { recursive: true });
-    fs.renameSync(src.absolutePath, dest.absolutePath);
+    const root = this.pathGuard.getVaultRoot();
+    const oldPathNoExt = src.relativePath.replace(/\.md$/, "");
+    const newPathNoExt = dest.relativePath.replace(/\.md$/, "");
+    const oldBaseName = path.basename(src.relativePath, ".md");
+    const newBaseName = path.basename(dest.relativePath, ".md");
+
+    const rollbackJournal: Array<{ absolutePath: string; originalContent: string }> = [];
+    const escapeRegex = (s: string) => s.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+    const wikilinkRegex = new RegExp(
+      `\\[\\[(${escapeRegex(src.relativePath)}|${escapeRegex(oldPathNoExt)}|${escapeRegex(oldBaseName)})(#[^\\]\\|]+)?(\\|[^\\]]+)?\\]\\]`,
+      "g"
+    );
+
+    if (updateBacklinks) {
+      const scanDir = (dir: string) => {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.name.startsWith(".")) continue;
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            scanDir(full);
+          } else if (entry.name.endsWith(".md") && full !== src.absolutePath) {
+            const noteText = fs.readFileSync(full, "utf-8");
+            if (wikilinkRegex.test(noteText)) {
+              wikilinkRegex.lastIndex = 0;
+              const updatedText = noteText.replace(wikilinkRegex, (_match, matchedTarget, heading, alias) => {
+                const h = heading || "";
+                const a = alias || "";
+                const replacement = matchedTarget === oldBaseName ? newBaseName : newPathNoExt;
+                return `[[${replacement}${h}${a}]]`;
+              });
+              rollbackJournal.push({ absolutePath: full, originalContent: noteText });
+              AtomicFs.writeFileSync(full, updatedText, "utf-8");
+            }
+          }
+        }
+      };
+
+      try {
+        scanDir(root);
+      } catch (err) {
+        for (const item of rollbackJournal) {
+          try {
+            AtomicFs.writeFileSync(item.absolutePath, item.originalContent, "utf-8");
+          } catch {
+            // ignore rollback error
+          }
+        }
+        throw err;
+      }
+    }
+
+    try {
+      fs.mkdirSync(path.dirname(dest.absolutePath), { recursive: true });
+      fs.renameSync(src.absolutePath, dest.absolutePath);
+    } catch (err) {
+      if (updateBacklinks) {
+        for (const item of rollbackJournal) {
+          try {
+            AtomicFs.writeFileSync(item.absolutePath, item.originalContent, "utf-8");
+          } catch {
+            // ignore
+          }
+        }
+      }
+      throw err;
+    }
 
     return {
       sourcePath: src.relativePath,
       targetPath: dest.relativePath,
       moved: true,
+      backlinksUpdated: rollbackJournal.length,
       revision: currentRevision,
+      etag: currentRevision,
+      obsidianUri: this.getObsidianUri(dest.relativePath),
     };
   }
 
@@ -285,30 +558,30 @@ export class VaultService {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
 
-    if (expectedRevision) {
-      const existing = fs.readFileSync(absolutePath, "utf-8");
-      const currentRevision = crypto.createHash("sha1").update(existing).digest("hex");
-      if (expectedRevision !== currentRevision) {
-        throw new ObsidianMcpError(
-          ErrorCode.CONFLICT,
-          `Concurrent edit detected on delete. Expected revision '${expectedRevision}' but note is at '${currentRevision}'.`,
-          409,
-          { expectedRevision, actualRevision: currentRevision }
-        );
-      }
+    const existing = fs.readFileSync(absolutePath, "utf-8");
+    const currentRevision = crypto.createHash("sha1").update(existing).digest("hex");
+    if (expectedRevision && expectedRevision !== currentRevision) {
+      throw new ObsidianMcpError(
+        ErrorCode.CONFLICT,
+        `Concurrent edit detected on delete. Expected revision '${expectedRevision}' but note is at '${currentRevision}'.`,
+        409,
+        { expectedRevision, actualRevision: currentRevision }
+      );
     }
 
     if (permanent) {
-      fs.unlinkSync(absolutePath);
+      AtomicFs.unlinkSync(absolutePath);
+      return { path: relativePath, deleted: true, permanent: true };
     } else {
-      // Move to .trash folder inside vault
-      const trashDir = path.join(this.pathGuard.getVaultRoot(), ".trash");
-      fs.mkdirSync(trashDir, { recursive: true });
-      const trashDest = path.join(trashDir, `${Date.now()}_${path.basename(absolutePath)}`);
-      fs.renameSync(absolutePath, trashDest);
+      const res = this.trashManager.moveToTrash(absolutePath, relativePath, currentRevision);
+      return {
+        path: relativePath,
+        deleted: true,
+        permanent: false,
+        trashPath: res.trashPath,
+        trashedAt: res.trashedAt,
+      };
     }
-
-    return { path: relativePath, deleted: true };
   }
 
   // --- SEARCH DOMAIN ---
@@ -321,14 +594,13 @@ export class VaultService {
         return { matches: parsed.slice(0, limit) };
       }
     } catch {
-      // Fallback: fast in-process full text search over markdown files
+      // In-process BM25 lexical ranking fallback
     }
 
-    const matches: Array<{ path: string; lines: number[] }> = [];
     const root = this.pathGuard.getVaultRoot();
+    const docs: DocumentItem[] = [];
 
     const walk = (dir: string) => {
-      if (matches.length >= limit) return;
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (entry.name.startsWith(".")) continue;
@@ -337,22 +609,21 @@ export class VaultService {
           walk(full);
         } else if (entry.name.endsWith(".md")) {
           const content = fs.readFileSync(full, "utf-8");
-          const lines = content.split("\n");
-          const hitLines: number[] = [];
-          lines.forEach((l, idx) => {
-            if (l.toLowerCase().includes(query.toLowerCase())) {
-              hitLines.push(idx + 1);
-            }
+          const rel = path.relative(root, full);
+          docs.push({
+            id: rel,
+            title: path.basename(rel, ".md"),
+            content,
           });
-          if (hitLines.length > 0) {
-            matches.push({ path: path.relative(root, full), lines: hitLines });
-          }
         }
       }
     };
 
     walk(root);
-    return { matches: matches.slice(0, limit) };
+    const engine = new BM25Engine(docs);
+    const matches = engine.search(query, limit);
+
+    return { matches };
   }
 
   public async searchContext(query: string, contextLines: number = 2, limit: number = 30) {
@@ -675,6 +946,114 @@ export class VaultService {
     return { path: note.path, links };
   }
 
+  public async getLinkPath(fromPath: string, toPath: string, maxDepth: number = 6) {
+    const fromSafe = this.pathGuard.resolveSafePath(fromPath);
+    const toSafe = this.pathGuard.resolveSafePath(toPath);
+
+    if (!fs.existsSync(fromSafe.absolutePath)) {
+      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Starting note '${fromSafe.relativePath}' does not exist`, 404);
+    }
+    if (!fs.existsSync(toSafe.absolutePath)) {
+      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Destination note '${toSafe.relativePath}' does not exist`, 404);
+    }
+
+    if (fromSafe.relativePath === toSafe.relativePath) {
+      return {
+        from: fromSafe.relativePath,
+        to: toSafe.relativePath,
+        found: true,
+        distance: 0,
+        path: [fromSafe.relativePath],
+      };
+    }
+
+    const root = this.pathGuard.getVaultRoot();
+    const noteLookup = new Map<string, string>();
+    const noteContentCache = new Map<string, string>();
+
+    const scanAllNotes = (dir: string) => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith(".")) continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          scanAllNotes(full);
+        } else if (entry.name.endsWith(".md")) {
+          const rel = path.relative(root, full);
+          const base = path.basename(rel, ".md");
+          const noExt = rel.replace(/\.md$/, "");
+
+          noteLookup.set(rel.toLowerCase(), rel);
+          noteLookup.set(noExt.toLowerCase(), rel);
+          if (!noteLookup.has(base.toLowerCase())) {
+            noteLookup.set(base.toLowerCase(), rel);
+          }
+        }
+      }
+    };
+    scanAllNotes(root);
+
+    const targetKey = toSafe.relativePath.toLowerCase();
+
+    // BFS Queue
+    const queue: Array<{ current: string; trail: string[] }> = [
+      { current: fromSafe.relativePath, trail: [fromSafe.relativePath] },
+    ];
+    const visited = new Set<string>([fromSafe.relativePath.toLowerCase()]);
+
+    while (queue.length > 0) {
+      const { current, trail } = queue.shift()!;
+
+      if (trail.length - 1 >= maxDepth) {
+        continue;
+      }
+
+      const currentAbs = path.join(root, current);
+      let content = noteContentCache.get(current);
+      if (content === undefined && fs.existsSync(currentAbs)) {
+        content = fs.readFileSync(currentAbs, "utf-8");
+        noteContentCache.set(current, content);
+      }
+
+      if (!content) continue;
+
+      const wikilinks = extractWikilinks(content);
+      for (const rawLink of wikilinks) {
+        const cleanLink = rawLink.split("|")[0].split("#")[0].trim().toLowerCase();
+        const resolvedTarget = noteLookup.get(cleanLink) || noteLookup.get(`${cleanLink}.md`);
+
+        if (resolvedTarget) {
+          const resolvedKey = resolvedTarget.toLowerCase();
+          if (resolvedKey === targetKey) {
+            return {
+              from: fromSafe.relativePath,
+              to: toSafe.relativePath,
+              found: true,
+              distance: trail.length,
+              path: [...trail, resolvedTarget],
+            };
+          }
+
+          if (!visited.has(resolvedKey)) {
+            visited.add(resolvedKey);
+            queue.push({
+              current: resolvedTarget,
+              trail: [...trail, resolvedTarget],
+            });
+          }
+        }
+      }
+    }
+
+    return {
+      from: fromSafe.relativePath,
+      to: toSafe.relativePath,
+      found: false,
+      distance: -1,
+      path: [],
+    };
+  }
+
   public async getOrphans() {
     try {
       const res = await this.cliAdapter.execute("orphans");
@@ -810,6 +1189,7 @@ export class VaultService {
   public async getNoteContext(
     targetPath: string,
     options?: {
+      stripComments?: boolean;
       include?: {
         body?: boolean;
         frontmatter?: boolean;
@@ -826,8 +1206,9 @@ export class VaultService {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
 
-    const content = fs.readFileSync(absolutePath, "utf-8");
-    const revision = crypto.createHash("sha1").update(content).digest("hex");
+    const rawContent = fs.readFileSync(absolutePath, "utf-8");
+    const revision = crypto.createHash("sha1").update(rawContent).digest("hex");
+    const content = options?.stripComments ? stripObsidianComments(rawContent) : rawContent;
     const parsed = parseNoteContent(content);
 
     const inc = {
@@ -906,6 +1287,8 @@ export class VaultService {
     return {
       path: relativePath,
       revision,
+      etag: revision,
+      obsidianUri: this.getObsidianUri(relativePath),
       frontmatter: inc.frontmatter ? parsed.frontmatter : undefined,
       headings: inc.headings ? headings : undefined,
       outgoingLinks: inc.outgoingLinks ? outgoingLinks : undefined,

@@ -14,6 +14,7 @@ export const GetFileInfoSchema = z.object({
 // Note schemas
 export const ReadNoteSchema = z.object({
   path: VaultRelativePathSchema,
+  stripComments: z.boolean().default(false).describe("If true, removes internal %% Obsidian comments %% before returning content"),
 });
 export const CreateNoteSchema = z.object({
   path: VaultRelativePathSchema,
@@ -36,16 +37,31 @@ export const UpdateNoteSchema = z.object({
   path: VaultRelativePathSchema,
   content: z.string(),
   expectedRevision: z.string().optional(),
+  ifMatch: z.string().optional(),
+});
+export const PatchNoteSchema = z.object({
+  path: VaultRelativePathSchema,
+  target: z.object({
+    type: z.enum(["heading", "block"]).describe("Target type: 'heading' for markdown heading or 'block' for block ID"),
+    value: z.string().min(1, "Target value cannot be empty").describe("Heading title or block identifier (e.g. 'Action Items' or '^summary')"),
+  }),
+  operation: z.enum(["replace", "append", "prepend"]).describe("Operation: replace target section/block, append after, or prepend before"),
+  content: z.string().describe("Content to insert or replace with"),
+  expectedRevision: z.string().optional(),
+  ifMatch: z.string().optional(),
 });
 export const MoveNoteSchema = z.object({
   sourcePath: VaultRelativePathSchema,
   targetPath: VaultRelativePathSchema,
   expectedRevision: z.string().optional(),
+  ifMatch: z.string().optional(),
+  updateBacklinks: z.boolean().default(true).describe("Automatically rewrites inbound wikilinks across other notes to the new path"),
 });
 export const DeleteNoteSchema = z.object({
   path: VaultRelativePathSchema,
-  permanent: z.boolean().default(false),
+  permanent: z.boolean().default(false).describe("If false, moves to safe trash (.obsidian-mcp/trash). If true, permanently deletes."),
   expectedRevision: z.string().optional(),
+  ifMatch: z.string().optional(),
 });
 
 // Search schemas
@@ -113,6 +129,11 @@ export const GetBacklinksSchema = z.object({
 export const GetLinksSchema = z.object({
   path: VaultRelativePathSchema,
 });
+export const GetLinkPathSchema = z.object({
+  from: VaultRelativePathSchema.describe("Starting note relative path"),
+  to: VaultRelativePathSchema.describe("Target destination note relative path"),
+  maxDepth: z.number().int().min(1).max(10).default(6).describe("Maximum graph traversal search depth"),
+});
 export const GetOrphansSchema = z.object({});
 export const GetUnresolvedLinksSchema = z.object({});
 export const GetDeadendsSchema = z.object({});
@@ -133,6 +154,7 @@ export const QueryBaseSchema = z.object({
 // Context & Discovery schemas
 export const GetNoteContextSchema = z.object({
   path: VaultRelativePathSchema,
+  stripComments: z.boolean().default(false).describe("If true, removes internal %% Obsidian comments %% from body content"),
   include: z
     .object({
       body: z.boolean().default(true),

@@ -27,6 +27,7 @@ export const TOOL_SCOPES: Record<string, ScopeType> = {
   obsidian_append_note: Scope.VAULT_WRITE,
   obsidian_prepend_note: Scope.VAULT_WRITE,
   obsidian_update_note: Scope.VAULT_WRITE,
+  obsidian_patch_note: Scope.VAULT_WRITE,
   obsidian_move_note: Scope.VAULT_DELETE,
   obsidian_delete_note: Scope.VAULT_DELETE,
 
@@ -52,6 +53,7 @@ export const TOOL_SCOPES: Record<string, ScopeType> = {
   // Links & Graph domain
   obsidian_get_backlinks: Scope.VAULT_READ,
   obsidian_get_links: Scope.VAULT_READ,
+  obsidian_get_link_path: Scope.VAULT_READ,
   obsidian_get_orphans: Scope.VAULT_READ,
   obsidian_get_unresolved_links: Scope.VAULT_READ,
   obsidian_get_deadends: Scope.VAULT_READ,

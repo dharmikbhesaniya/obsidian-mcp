@@ -20,7 +20,7 @@ export class PathGuard {
    * Resolves and validates a vault-relative path.
    * Throws ObsidianMcpError(PATH_INVALID) if the path is invalid or traverses outside the vault.
    */
-  public resolveSafePath(inputPath: string): { relativePath: string; absolutePath: string } {
+  public resolveSafePath(inputPath: string, allowReserved: boolean = false): { relativePath: string; absolutePath: string } {
     if (!inputPath || typeof inputPath !== "string") {
       throw new ObsidianMcpError(ErrorCode.PATH_INVALID, "Path parameter must be a non-empty string", 400);
     }
@@ -79,6 +79,27 @@ export class PathGuard {
     }
 
     const relative = path.relative(this.vaultRoot, resolved);
+
+    // Hardblock access to reserved internal directories (.obsidian, .obsidian-mcp, .git, .trash)
+    if (!allowReserved) {
+      const normalizedSegments = relative.split(path.sep);
+      const isReserved = normalizedSegments.some(
+        (seg) =>
+          seg === ".obsidian" ||
+          seg === ".obsidian-mcp" ||
+          seg === ".git" ||
+          seg === ".trash"
+      );
+      if (isReserved) {
+        throw new ObsidianMcpError(
+          ErrorCode.FORBIDDEN,
+          `Access to reserved internal directory '${inputPath}' is restricted.`,
+          403,
+          { inputPath }
+        );
+      }
+    }
+
     return {
       relativePath: relative,
       absolutePath: resolved,

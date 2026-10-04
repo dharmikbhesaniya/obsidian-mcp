@@ -58,4 +58,27 @@ describe("PathGuard", () => {
 
     fs.rmSync(outsideDir, { recursive: true, force: true });
   });
+
+  it("should reject access to internal reserved directories unless allowReserved is true", () => {
+    const reservedPaths = [
+      ".obsidian/workspace.json",
+      ".obsidian-mcp/trash/note.md",
+      ".git/config",
+      ".trash/old.md",
+      "subfolder/.obsidian/plugins.json",
+    ];
+
+    for (const resPath of reservedPaths) {
+      expect(() => guard.resolveSafePath(resPath)).toThrowError(ObsidianMcpError);
+      try {
+        guard.resolveSafePath(resPath);
+      } catch (err: any) {
+        expect(err.code).toBe(ErrorCode.FORBIDDEN);
+      }
+
+      // Should succeed when allowReserved is true
+      const allowed = guard.resolveSafePath(resPath, true);
+      expect(allowed.relativePath).toBe(resPath);
+    }
+  });
 });

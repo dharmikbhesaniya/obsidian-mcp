@@ -296,4 +296,204 @@ See [[04-Budget/Rel1]] and [[04-Budget/Rel2]].
     expect(selectiveCtx.frontmatter.title).toBe("Main Note");
     expect(selectiveCtx.relatedNotes.length).toBeLessThanOrEqual(1);
   });
+
+  it("should surgically patch note headings (replace, append, prepend)", async () => {
+    const notePath = "patch-heading.md";
+    await service.createNote(
+      notePath,
+      "# Overview\nIntro text.\n\n## Action Items\n- [ ] Task 1\n\n## Notes\nEnd notes."
+    );
+
+    // 1. Append to "Action Items"
+    const appendRes = await service.patchNote(
+      notePath,
+      { type: "heading", value: "Action Items" },
+      "append",
+      "- [ ] Task 2"
+    );
+    expect(appendRes.patched).toBe(true);
+    let read = await service.readNote(notePath);
+    expect(read.content).toContain("- [ ] Task 1\n\n- [ ] Task 2");
+    expect(read.content).toContain("## Notes");
+
+    // 2. Prepend to "Action Items"
+    await service.patchNote(
+      notePath,
+      { type: "heading", value: "## Action Items" },
+      "prepend",
+      "- [ ] Urgent Priority"
+    );
+    read = await service.readNote(notePath);
+    expect(read.content).toContain("## Action Items\n\n- [ ] Urgent Priority\n\n- [ ] Task 1");
+
+    // 3. Replace "Action Items" section
+    await service.patchNote(
+      notePath,
+      { type: "heading", value: "Action Items" },
+      "replace",
+      "All tasks completed!"
+    );
+    read = await service.readNote(notePath);
+    expect(read.content).toContain("## Action Items\n\nAll tasks completed!\n\n## Notes");
+    expect(read.content).not.toContain("Task 1");
+
+    // 4. Missing heading throws 404
+    await expect(
+      service.patchNote(notePath, { type: "heading", value: "Nonexistent" }, "append", "Text")
+    ).rejects.toThrowError(ObsidianMcpError);
+  });
+
+  it("should surgically patch note blocks (replace, append, prepend)", async () => {
+    const notePath = "patch-block.md";
+    await service.createNote(
+      notePath,
+      "# Document\n\nThis is a key quote. ^quote-1\n\nSome trailing explanation."
+    );
+
+    // 1. Append after block
+    await service.patchNote(
+      notePath,
+      { type: "block", value: "^quote-1" },
+      "append",
+      "Analysis of quote 1."
+    );
+    let read = await service.readNote(notePath);
+    expect(read.content).toContain("This is a key quote. ^quote-1\nAnalysis of quote 1.");
+
+    // 2. Prepend before block
+    await service.patchNote(
+      notePath,
+      { type: "block", value: "quote-1" },
+      "prepend",
+      "Introduction to quote 1:"
+    );
+    read = await service.readNote(notePath);
+    expect(read.content).toContain("Introduction to quote 1:\nThis is a key quote. ^quote-1");
+
+    // 3. Replace block
+    await service.patchNote(
+      notePath,
+      { type: "block", value: "quote-1" },
+      "replace",
+      "This is the updated quote."
+    );
+    read = await service.readNote(notePath);
+    expect(read.content).toContain("This is the updated quote. ^quote-1");
+  });
+
+  it("should atomically move notes and rewrite inbound backlinks across the vault", async () => {
+    await service.createNote("01-Projects/alpha.md", "# Alpha Project");
+    await service.createNote(
+      "02-Notes/ref1.md",
+      "Referencing [[01-Projects/alpha]] and [[alpha|Alpha Shortcut]] and [[alpha#Overview]]."
+    );
+    await service.createNote("02-Notes/ref2.md", "Another reference to [[01-Projects/alpha]].");
+
+    const moveRes = await service.moveNote(
+      "01-Projects/alpha.md",
+      "01-Projects/alpha-renamed.md",
+      undefined,
+      true
+    );
+    expect(moveRes.moved).toBe(true);
+    expect(moveRes.backlinksUpdated).toBe(2);
+    expect(moveRes.obsidianUri).toContain("alpha-renamed.md");
+
+    // Verify references updated
+    const ref1 = await service.readNote("02-Notes/ref1.md");
+    expect(ref1.content).toContain("[[01-Projects/alpha-renamed]]");
+    expect(ref1.content).toContain("[[alpha-renamed|Alpha Shortcut]]");
+    expect(ref1.content).toContain("[[alpha-renamed#Overview]]");
+
+    const ref2 = await service.readNote("02-Notes/ref2.md");
+    expect(ref2.content).toContain("[[01-Projects/alpha-renamed]]");
+  });
+
+  it("should safely move deleted note to .obsidian-mcp/trash with metadata", async () => {
+    const notePath = "to-delete.md";
+    await service.createNote(notePath, "# Temporary Document");
+
+    const delRes = await service.deleteNote(notePath, false);
+    expect(delRes.deleted).toBe(true);
+    expect(delRes.permanent).toBe(false);
+    expect(delRes.trashPath).toContain(".obsidian-mcp/trash");
+
+    // Note should no longer exist in vault
+    await expect(service.readNote(notePath)).rejects.toThrowError(ObsidianMcpError);
+
+    // Trash manager should list the trashed note
+    const trashItems = service.getTrashManager().listTrash();
+    expect(trashItems.some((item) => item.originalPath === "to-delete.md")).toBe(true);
+  });
+
+  it("should strip Obsidian comments %% %% and return obsidian desktop URI", async () => {
+    const notePath = "comments.md";
+    await service.createNote(
+      notePath,
+      "# Title\nPublic visible text. %% This is a secret developer note %% More public text.\n%% Multi-line\ncomment %%\nFinal text."
+    );
+
+    // 1. readNote without stripComments
+    const rawRead = await service.readNote(notePath, false);
+    expect(rawRead.content).toContain("secret developer note");
+    expect(rawRead.etag).toBeDefined();
+    expect(rawRead.obsidianUri).toContain("obsidian://open?vault=");
+
+    // 2. readNote with stripComments
+    const cleanRead = await service.readNote(notePath, true);
+    expect(cleanRead.content).not.toContain("secret developer note");
+    expect(cleanRead.content).not.toContain("Multi-line");
+    expect(cleanRead.content).toContain("Public visible text.");
+    expect(cleanRead.content).toContain("More public text.");
+    expect(cleanRead.content).toContain("Final text.");
+
+    // 3. getNoteContext with stripComments
+    const cleanCtx = await service.getNoteContext(notePath, { stripComments: true });
+    expect(cleanCtx.body).not.toContain("secret developer note");
+    expect(cleanCtx.obsidianUri).toContain("obsidian://open?vault=");
+  });
+
+  it("should find the shortest wikilink path between two notes using BFS", async () => {
+    // Chain: NoteA -> NoteB -> NoteC -> NoteD
+    // Alternative shortcut: NoteA -> NoteD
+    await service.createNote("Graph/NoteA.md", "Points to [[Graph/NoteB]] and other topics.");
+    await service.createNote("Graph/NoteB.md", "Points to [[Graph/NoteC]].");
+    await service.createNote("Graph/NoteC.md", "Points to [[Graph/NoteD]].");
+    await service.createNote("Graph/NoteD.md", "Terminal node in knowledge graph.");
+    await service.createNote("Graph/Isolated.md", "No incoming or outgoing links.");
+
+    // 1. Multi-hop path from NoteA to NoteD
+    const pathRes = await service.getLinkPath("Graph/NoteA.md", "Graph/NoteD.md");
+    expect(pathRes.found).toBe(true);
+    expect(pathRes.distance).toBe(3);
+    expect(pathRes.path).toEqual([
+      "Graph/NoteA.md",
+      "Graph/NoteB.md",
+      "Graph/NoteC.md",
+      "Graph/NoteD.md",
+    ]);
+
+    // 2. Direct hop from NoteB to NoteC
+    const directRes = await service.getLinkPath("Graph/NoteB.md", "Graph/NoteC.md");
+    expect(directRes.found).toBe(true);
+    expect(directRes.distance).toBe(1);
+    expect(directRes.path).toEqual(["Graph/NoteB.md", "Graph/NoteC.md"]);
+
+    // 3. Disconnected note
+    const disconnected = await service.getLinkPath("Graph/NoteA.md", "Graph/Isolated.md");
+    expect(disconnected.found).toBe(false);
+    expect(disconnected.distance).toBe(-1);
+    expect(disconnected.path).toHaveLength(0);
+
+    // 4. Same note (distance 0)
+    const sameNote = await service.getLinkPath("Graph/NoteA.md", "Graph/NoteA.md");
+    expect(sameNote.found).toBe(true);
+    expect(sameNote.distance).toBe(0);
+    expect(sameNote.path).toEqual(["Graph/NoteA.md"]);
+
+    // 5. Non-existent note throws 404
+    await expect(
+      service.getLinkPath("Graph/NoteA.md", "Graph/Missing.md")
+    ).rejects.toThrowError(ObsidianMcpError);
+  });
 });

@@ -80,16 +80,17 @@ export function registerTools(
   server.registerTool("obsidian_get_file_info", { description: "Retrieves size, modification timestamp, and metadata of a file", inputSchema: Schemas.GetFileInfoSchema.shape }, wrapHandler("obsidian_get_file_info", (args) => vaultService.getFileInfo(args.path)));
 
   // 2. Notes Domain
-  server.registerTool("obsidian_read_note", { description: "Reads the full content and frontmatter of a vault note", inputSchema: Schemas.ReadNoteSchema.shape }, wrapHandler("obsidian_read_note", (args) => vaultService.readNote(args.path)));
+  server.registerTool("obsidian_read_note", { description: "Reads the full content and frontmatter of a vault note with comment stripping option", inputSchema: Schemas.ReadNoteSchema.shape }, wrapHandler("obsidian_read_note", (args) => vaultService.readNote(args.path, args.stripComments)));
   server.registerTool("obsidian_create_note", { description: "Creates a new note with optional template", inputSchema: Schemas.CreateNoteSchema.shape }, wrapHandler("obsidian_create_note", (args) => vaultService.createNote(args.path, args.content, args.template, args.overwrite)));
   server.registerTool("obsidian_append_note", { description: "Appends text content to an existing note with revision check", inputSchema: Schemas.AppendNoteSchema.shape }, wrapHandler("obsidian_append_note", (args) => vaultService.appendNote(args.path, args.content, args.ensureNewline, args.expectedRevision)));
   server.registerTool("obsidian_prepend_note", { description: "Prepends text content below frontmatter in an existing note with revision check", inputSchema: Schemas.PrependNoteSchema.shape }, wrapHandler("obsidian_prepend_note", (args) => vaultService.prependNote(args.path, args.content, args.expectedRevision)));
-  server.registerTool("obsidian_update_note", { description: "Updates note content with optimistic revision control", inputSchema: Schemas.UpdateNoteSchema.shape }, wrapHandler("obsidian_update_note", (args) => vaultService.updateNote(args.path, args.content, args.expectedRevision)));
+  server.registerTool("obsidian_update_note", { description: "Updates note content with optimistic revision control", inputSchema: Schemas.UpdateNoteSchema.shape }, wrapHandler("obsidian_update_note", (args) => vaultService.updateNote(args.path, args.content, args.expectedRevision || args.ifMatch)));
+  server.registerTool("obsidian_patch_note", { description: "Surgically updates, appends to, or prepends to a note heading section or block ID without rewriting the entire note", inputSchema: Schemas.PatchNoteSchema.shape }, wrapHandler("obsidian_patch_note", (args) => vaultService.patchNote(args.path, args.target, args.operation, args.content, args.expectedRevision || args.ifMatch)));
 
   // Conditionally register destructive tools based on configuration
   if (!config || config.ENABLE_DESTRUCTIVE_TOOLS !== false) {
-    server.registerTool("obsidian_move_note", { description: "Moves or renames a note within the vault with revision check", inputSchema: Schemas.MoveNoteSchema.shape }, wrapHandler("obsidian_move_note", (args) => vaultService.moveNote(args.sourcePath, args.targetPath, args.expectedRevision)));
-    server.registerTool("obsidian_delete_note", { description: "Deletes or moves a note to the vault trash with revision check", inputSchema: Schemas.DeleteNoteSchema.shape }, wrapHandler("obsidian_delete_note", (args) => vaultService.deleteNote(args.path, args.permanent, args.expectedRevision)));
+    server.registerTool("obsidian_move_note", { description: "Moves or renames a note within the vault with automatic backlink updating and revision check", inputSchema: Schemas.MoveNoteSchema.shape }, wrapHandler("obsidian_move_note", (args) => vaultService.moveNote(args.sourcePath, args.targetPath, args.expectedRevision || args.ifMatch, args.updateBacklinks)));
+    server.registerTool("obsidian_delete_note", { description: "Deletes or moves a note to the safe vault trash (.obsidian-mcp/trash) with revision check", inputSchema: Schemas.DeleteNoteSchema.shape }, wrapHandler("obsidian_delete_note", (args) => vaultService.deleteNote(args.path, args.permanent, args.expectedRevision || args.ifMatch)));
   }
 
   // 3. Search Domain
@@ -114,6 +115,7 @@ export function registerTools(
   // 7. Graph & Links Domain
   server.registerTool("obsidian_get_backlinks", { description: "Lists all incoming links referencing a target note", inputSchema: Schemas.GetBacklinksSchema.shape }, wrapHandler("obsidian_get_backlinks", (args) => vaultService.getBacklinks(args.path)));
   server.registerTool("obsidian_get_links", { description: "Lists all outgoing internal links within a note", inputSchema: Schemas.GetLinksSchema.shape }, wrapHandler("obsidian_get_links", (args) => vaultService.getLinks(args.path)));
+  server.registerTool("obsidian_get_link_path", { description: "Finds the shortest wikilink connection path between two notes using breadth-first search", inputSchema: Schemas.GetLinkPathSchema.shape }, wrapHandler("obsidian_get_link_path", (args) => vaultService.getLinkPath(args.from, args.to, args.maxDepth)));
   server.registerTool("obsidian_get_orphans", { description: "Discovers orphaned notes that have no internal links", inputSchema: Schemas.GetOrphansSchema.shape }, wrapHandler("obsidian_get_orphans", () => vaultService.getOrphans()));
   server.registerTool("obsidian_get_unresolved_links", { description: "Lists broken internal wikilinks pointing to non-existent notes", inputSchema: Schemas.GetUnresolvedLinksSchema.shape }, wrapHandler("obsidian_get_unresolved_links", () => vaultService.getUnresolvedLinks()));
   server.registerTool("obsidian_get_deadends", { description: "Lists notes with incoming links but zero outgoing links", inputSchema: Schemas.GetDeadendsSchema.shape }, wrapHandler("obsidian_get_deadends", () => vaultService.getDeadends()));
@@ -128,11 +130,12 @@ export function registerTools(
   server.registerTool(
     "obsidian_get_note_context",
     {
-      description: "Retrieves full note context (content, frontmatter, headings, backlinks, and related notes) with budget options",
+      description: "Retrieves full note context (content, frontmatter, headings, backlinks, and related notes) with budget options and comment stripping",
       inputSchema: Schemas.GetNoteContextSchema.shape,
     },
     wrapHandler("obsidian_get_note_context", (args) =>
       vaultService.getNoteContext(args.path, {
+        stripComments: args.stripComments,
         include: args.include,
         maxRelatedNotes: args.maxRelatedNotes,
       })

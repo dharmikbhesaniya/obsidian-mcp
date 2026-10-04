@@ -30,8 +30,17 @@ export class PathGuard {
       throw new ObsidianMcpError(ErrorCode.PATH_INVALID, "Null byte injection detected in path", 400);
     }
 
-    // Strip leading slashes to enforce vault-relative interpretation
-    const cleaned = inputPath.replace(/^[\/\\]+/, "");
+    // Reject leading slashes to enforce strict vault-relative paths
+    if (inputPath.startsWith("/") || inputPath.startsWith("\\")) {
+      throw new ObsidianMcpError(
+        ErrorCode.PATH_INVALID,
+        `Path '${inputPath}' must be strictly vault-relative without leading slash or root indicator.`,
+        400,
+        { inputPath }
+      );
+    }
+
+    const cleaned = inputPath;
 
     // Resolve absolute path against vault root
     const resolved = path.resolve(this.vaultRoot, cleaned);

@@ -4,6 +4,29 @@ import crypto from "node:crypto";
 import { PathGuard } from "../security/path-guard.js";
 import { ObsidianCliAdapter } from "../adapters/obsidian/cli.adapter.js";
 import { ErrorCode, ObsidianMcpError } from "../schemas/errors.js";
+import {
+  parseNoteContent,
+  setFrontmatterProperty,
+  removeFrontmatterProperty,
+  extractHeadings,
+  extractWikilinks,
+} from "../utils/frontmatter.js";
+
+export const ALLOWED_CLI_COMMANDS = new Set([
+  "version",
+  "search",
+  "tasks",
+  "backlinks",
+  "orphans",
+  "unresolved",
+  "deadends",
+  "tags",
+  "tag",
+  "properties",
+  "bases",
+  "outline",
+  "daily:read",
+]);
 
 export class VaultService {
   private readonly pathGuard: PathGuard;
@@ -37,10 +60,10 @@ export class VaultService {
     }
 
     return {
+      vaultId: path.basename(root),
       name: path.basename(root),
       status: "connected",
       totalFiles,
-      vaultPath: root,
     };
   }
 
@@ -97,27 +120,13 @@ export class VaultService {
 
     const content = fs.readFileSync(absolutePath, "utf-8");
     const revision = crypto.createHash("sha1").update(content).digest("hex");
-
-    // Extract frontmatter properties if present
-    const frontmatter: Record<string, any> = {};
-    const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-    if (fmMatch) {
-      const lines = fmMatch[1].split("\n");
-      for (const line of lines) {
-        const parts = line.split(":");
-        if (parts.length >= 2) {
-          const key = parts[0].trim();
-          const val = parts.slice(1).join(":").trim();
-          frontmatter[key] = val;
-        }
-      }
-    }
+    const parsed = parseNoteContent(content);
 
     return {
       path: relativePath,
       content,
       revision,
-      frontmatter,
+      frontmatter: parsed.frontmatter,
     };
   }
 
@@ -149,26 +158,50 @@ export class VaultService {
     return { path: relativePath, created: true };
   }
 
-  public async appendNote(targetPath: string, content: string, ensureNewline: boolean = true) {
-    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
-    if (!fs.existsSync(absolutePath)) {
-      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
-    }
-
-    let existing = fs.readFileSync(absolutePath, "utf-8");
-    const toAppend = ensureNewline && !existing.endsWith("\n") ? `\n${content}` : content;
-    fs.appendFileSync(absolutePath, toAppend, "utf-8");
-
-    return { path: relativePath, appended: true };
-  }
-
-  public async prependNote(targetPath: string, content: string) {
+  public async appendNote(targetPath: string, content: string, ensureNewline: boolean = true, expectedRevision?: string) {
     const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
 
     const existing = fs.readFileSync(absolutePath, "utf-8");
+    const currentRevision = crypto.createHash("sha1").update(existing).digest("hex");
+
+    if (expectedRevision && expectedRevision !== currentRevision) {
+      throw new ObsidianMcpError(
+        ErrorCode.CONFLICT,
+        `Concurrent edit detected. Expected revision '${expectedRevision}' but note is at '${currentRevision}'.`,
+        409,
+        { expectedRevision, actualRevision: currentRevision }
+      );
+    }
+
+    const toAppend = ensureNewline && !existing.endsWith("\n") ? `\n${content}` : content;
+    fs.appendFileSync(absolutePath, toAppend, "utf-8");
+    const newContent = existing + toAppend;
+    const newRevision = crypto.createHash("sha1").update(newContent).digest("hex");
+
+    return { path: relativePath, appended: true, newRevision };
+  }
+
+  public async prependNote(targetPath: string, content: string, expectedRevision?: string) {
+    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+    if (!fs.existsSync(absolutePath)) {
+      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
+    }
+
+    const existing = fs.readFileSync(absolutePath, "utf-8");
+    const currentRevision = crypto.createHash("sha1").update(existing).digest("hex");
+
+    if (expectedRevision && expectedRevision !== currentRevision) {
+      throw new ObsidianMcpError(
+        ErrorCode.CONFLICT,
+        `Concurrent edit detected. Expected revision '${expectedRevision}' but note is at '${currentRevision}'.`,
+        409,
+        { expectedRevision, actualRevision: currentRevision }
+      );
+    }
+
     // Prepend below frontmatter if present
     let updated = "";
     const fmMatch = existing.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n/);
@@ -181,7 +214,8 @@ export class VaultService {
     }
 
     fs.writeFileSync(absolutePath, updated, "utf-8");
-    return { path: relativePath, prepended: true };
+    const newRevision = crypto.createHash("sha1").update(updated).digest("hex");
+    return { path: relativePath, prepended: true, newRevision };
   }
 
   public async updateNote(targetPath: string, content: string, expectedRevision?: string) {
@@ -233,10 +267,23 @@ export class VaultService {
     };
   }
 
-  public async deleteNote(targetPath: string, permanent: boolean = false) {
+  public async deleteNote(targetPath: string, permanent: boolean = false, expectedRevision?: string) {
     const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
+    }
+
+    if (expectedRevision) {
+      const existing = fs.readFileSync(absolutePath, "utf-8");
+      const currentRevision = crypto.createHash("sha1").update(existing).digest("hex");
+      if (expectedRevision !== currentRevision) {
+        throw new ObsidianMcpError(
+          ErrorCode.CONFLICT,
+          `Concurrent edit detected on delete. Expected revision '${expectedRevision}' but note is at '${currentRevision}'.`,
+          409,
+          { expectedRevision, actualRevision: currentRevision }
+        );
+      }
     }
 
     if (permanent) {
@@ -483,51 +530,50 @@ export class VaultService {
     return { path: note.path, name, value };
   }
 
-  public async removeProperty(targetPath: string, name: string) {
+  public async removeProperty(targetPath: string, name: string, expectedRevision?: string) {
     const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
     if (!fs.existsSync(absolutePath)) {
       throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
 
     const content = fs.readFileSync(absolutePath, "utf-8");
-    const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-    if (fmMatch) {
-      const fmLines = fmMatch[1].split("\n").filter((l) => !l.startsWith(`${name}:`));
-      const rest = content.slice(fmMatch[0].length);
-      const updated = `---\n${fmLines.join("\n")}\n---${rest}`;
-      fs.writeFileSync(absolutePath, updated, "utf-8");
+    const currentRevision = crypto.createHash("sha1").update(content).digest("hex");
+    if (expectedRevision && expectedRevision !== currentRevision) {
+      throw new ObsidianMcpError(
+        ErrorCode.CONFLICT,
+        `Concurrent edit detected. Expected revision '${expectedRevision}' but note is at '${currentRevision}'.`,
+        409,
+        { expectedRevision, actualRevision: currentRevision }
+      );
     }
-    return { path: relativePath, name, removed: true };
+
+    const updated = removeFrontmatterProperty(content, name);
+    fs.writeFileSync(absolutePath, updated, "utf-8");
+    const newRevision = crypto.createHash("sha1").update(updated).digest("hex");
+    return { path: relativePath, name, removed: true, newRevision };
   }
 
-  public async setProperty(targetPath: string, name: string, value: any) {
-    try {
-      await this.cliAdapter.execute("property:set", [
-        `path=${targetPath}`,
-        `name=${name}`,
-        `value=${String(value)}`,
-      ]);
-      return { path: targetPath, name, updated: true };
-    } catch {
-      const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
-      const content = fs.readFileSync(absolutePath, "utf-8");
-      // Add or update frontmatter
-      let updated = "";
-      if (content.startsWith("---")) {
-        const endFm = content.indexOf("\n---", 3);
-        if (endFm !== -1) {
-          const fm = content.slice(4, endFm);
-          const rest = content.slice(endFm + 4);
-          updated = `---\n${fm}\n${name}: ${value}\n---${rest}`;
-        } else {
-          updated = `---\n${name}: ${value}\n---\n\n${content}`;
-        }
-      } else {
-        updated = `---\n${name}: ${value}\n---\n\n${content}`;
-      }
-      fs.writeFileSync(absolutePath, updated, "utf-8");
-      return { path: relativePath, name, updated: true };
+  public async setProperty(targetPath: string, name: string, value: any, expectedRevision?: string) {
+    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+    if (!fs.existsSync(absolutePath)) {
+      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
     }
+
+    const content = fs.readFileSync(absolutePath, "utf-8");
+    const currentRevision = crypto.createHash("sha1").update(content).digest("hex");
+    if (expectedRevision && expectedRevision !== currentRevision) {
+      throw new ObsidianMcpError(
+        ErrorCode.CONFLICT,
+        `Concurrent edit detected. Expected revision '${expectedRevision}' but note is at '${currentRevision}'.`,
+        409,
+        { expectedRevision, actualRevision: currentRevision }
+      );
+    }
+
+    const updated = setFrontmatterProperty(content, name, value);
+    fs.writeFileSync(absolutePath, updated, "utf-8");
+    const newRevision = crypto.createHash("sha1").update(updated).digest("hex");
+    return { path: relativePath, name, value, updated: true, newRevision };
   }
 
   // --- LINKS & GRAPH DOMAIN ---
@@ -607,7 +653,17 @@ export class VaultService {
           if (e.isDirectory()) walk(full);
           else if (e.name.endsWith(".md")) {
             const content = fs.readFileSync(full, "utf-8");
-            if (content.includes(`#${cleanTag}`) || content.includes(`tags: ${cleanTag}`)) {
+            const parsed = parseNoteContent(content);
+            const noteTags = Array.isArray(parsed.frontmatter.tags)
+              ? parsed.frontmatter.tags
+              : typeof parsed.frontmatter.tags === "string"
+              ? [parsed.frontmatter.tags]
+              : [];
+            const hasTag =
+              noteTags.some((t: any) => String(t).toLowerCase() === cleanTag.toLowerCase()) ||
+              content.includes(`#${cleanTag}`);
+
+            if (hasTag) {
               notes.push(path.relative(root, full));
             }
           }
@@ -659,11 +715,226 @@ export class VaultService {
   // --- ADVANCED ESCAPE HATCH ---
 
   public async executeCli(command: string, args: Record<string, string>) {
+    if (!ALLOWED_CLI_COMMANDS.has(command)) {
+      throw new ObsidianMcpError(
+        ErrorCode.FORBIDDEN,
+        `Command '${command}' is not in the Obsidian CLI allowlist. Permitted commands: ${Array.from(ALLOWED_CLI_COMMANDS).join(", ")}`,
+        403,
+        { command, allowedCommands: Array.from(ALLOWED_CLI_COMMANDS) }
+      );
+    }
+
     const argList = Object.entries(args).map(([k, v]) => `${k}=${v}`);
     const res = await this.cliAdapter.execute(command, argList);
     return {
       stdout: res.stdout,
       exitCode: res.exitCode,
+    };
+  }
+
+  // --- CONTEXT & DISCOVERY DOMAIN ---
+
+  public async getNoteContext(targetPath: string) {
+    const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
+    if (!fs.existsSync(absolutePath)) {
+      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
+    }
+
+    const content = fs.readFileSync(absolutePath, "utf-8");
+    const revision = crypto.createHash("sha1").update(content).digest("hex");
+    const parsed = parseNoteContent(content);
+    const headings = extractHeadings(content);
+    const outgoingLinks = extractWikilinks(content);
+
+    // Backlinks
+    let backlinks: string[] = [];
+    try {
+      const res = await this.cliAdapter.execute("backlinks", [`path=${relativePath}`]);
+      backlinks = res.stdout.split("\n").filter(Boolean);
+    } catch {
+      // In-process backlinks scan
+      const root = this.pathGuard.getVaultRoot();
+      const noteBaseName = path.basename(relativePath, ".md");
+      const notePathNoExt = relativePath.replace(/\.md$/, "");
+      const walk = (dir: string) => {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.name.startsWith(".")) continue;
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) walk(full);
+          else if (entry.name.endsWith(".md") && full !== absolutePath) {
+            const txt = fs.readFileSync(full, "utf-8");
+            if (
+              txt.includes(`[[${noteBaseName}]]`) ||
+              txt.includes(`[[${relativePath}]]`) ||
+              txt.includes(`[[${notePathNoExt}]]`)
+            ) {
+              backlinks.push(path.relative(root, full));
+            }
+          }
+        }
+      };
+      walk(root);
+    }
+
+    // Related notes sharing identical tags
+    const relatedNotes: string[] = [];
+    const noteTags: string[] = Array.isArray(parsed.frontmatter.tags)
+      ? parsed.frontmatter.tags
+      : typeof parsed.frontmatter.tags === "string"
+      ? [parsed.frontmatter.tags]
+      : [];
+
+    if (noteTags.length > 0) {
+      for (const tag of noteTags) {
+        try {
+          const tagRes = await this.getTagNotes(tag);
+          for (const n of tagRes.notes) {
+            if (n !== relativePath && !relatedNotes.includes(n)) {
+              relatedNotes.push(n);
+              if (relatedNotes.length >= 10) break;
+            }
+          }
+        } catch {
+          // Ignore tag scan errors
+        }
+      }
+    }
+
+    return {
+      path: relativePath,
+      revision,
+      frontmatter: parsed.frontmatter,
+      headings,
+      outgoingLinks,
+      backlinks,
+      relatedNotes,
+      body: parsed.body.trim(),
+    };
+  }
+
+  public async findNotes(filter: {
+    query?: string;
+    tag?: string;
+    folder?: string;
+    property?: { name: string; value?: any };
+    limit?: number;
+  }) {
+    const limit = filter.limit ?? 20;
+    const root = this.pathGuard.getVaultRoot();
+    const targetDir = filter.folder ? this.pathGuard.resolveSafePath(filter.folder).absolutePath : root;
+
+    if (!fs.existsSync(targetDir)) {
+      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Folder '${filter.folder}' not found`, 404);
+    }
+
+    const results: Array<{ path: string; title: string; tags: string[]; mtime: string; size: number }> = [];
+
+    const walk = (dir: string) => {
+      if (results.length >= limit) return;
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith(".")) continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.name.endsWith(".md")) {
+          const rel = path.relative(root, full);
+          const raw = fs.readFileSync(full, "utf-8");
+          const parsed = parseNoteContent(raw);
+
+          // Query filter
+          if (filter.query) {
+            const q = filter.query.toLowerCase();
+            const matchesTitle = path.basename(rel, ".md").toLowerCase().includes(q);
+            const matchesBody = raw.toLowerCase().includes(q);
+            if (!matchesTitle && !matchesBody) continue;
+          }
+
+          // Tag filter
+          const noteTags: string[] = Array.isArray(parsed.frontmatter.tags)
+            ? parsed.frontmatter.tags
+            : typeof parsed.frontmatter.tags === "string"
+            ? [parsed.frontmatter.tags]
+            : [];
+
+          if (filter.tag) {
+            const cleanTag = filter.tag.replace(/^#/, "");
+            const hasTag = noteTags.some((t) => t.toLowerCase() === cleanTag.toLowerCase()) || raw.includes(`#${cleanTag}`);
+            if (!hasTag) continue;
+          }
+
+          // Property filter
+          if (filter.property) {
+            const val = parsed.frontmatter[filter.property.name];
+            if (val === undefined) continue;
+            if (filter.property.value !== undefined && val !== filter.property.value) continue;
+          }
+
+          const stat = fs.statSync(full);
+          const title = typeof parsed.frontmatter.title === "string" ? parsed.frontmatter.title : path.basename(rel, ".md");
+
+          results.push({
+            path: rel,
+            title,
+            tags: noteTags,
+            mtime: stat.mtime.toISOString(),
+            size: stat.size,
+          });
+        }
+      }
+    };
+
+    walk(targetDir);
+    return { notes: results.slice(0, limit), total: results.length };
+  }
+
+  public async recentChanges(filter: {
+    limit?: number;
+    folder?: string;
+    sinceDays?: number;
+  }) {
+    const limit = filter.limit ?? 20;
+    const root = this.pathGuard.getVaultRoot();
+    const targetDir = filter.folder ? this.pathGuard.resolveSafePath(filter.folder).absolutePath : root;
+
+    if (!fs.existsSync(targetDir)) {
+      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Folder '${filter.folder}' not found`, 404);
+    }
+
+    const cutoffTime = filter.sinceDays ? Date.now() - filter.sinceDays * 24 * 60 * 60 * 1000 : 0;
+    const files: Array<{ path: string; mtime: string; mtimeMs: number; size: number }> = [];
+
+    const walk = (dir: string) => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith(".")) continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.name.endsWith(".md")) {
+          const stat = fs.statSync(full);
+          if (stat.mtimeMs >= cutoffTime) {
+            files.push({
+              path: path.relative(root, full),
+              mtime: stat.mtime.toISOString(),
+              mtimeMs: stat.mtimeMs,
+              size: stat.size,
+            });
+          }
+        }
+      }
+    };
+
+    walk(targetDir);
+
+    // Sort newest first
+    files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    const sliced = files.slice(0, limit).map(({ path, mtime, size }) => ({ path, mtime, size }));
+
+    return {
+      recentChanges: sliced,
+      total: sliced.length,
     };
   }
 }

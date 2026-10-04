@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { ErrorCode, ObsidianMcpError } from "../schemas/errors.js";
 import { Scope, ScopeType, hasRequiredScope } from "../config/scopes.js";
 import { AppConfig } from "../config/config.js";
@@ -7,6 +8,24 @@ export interface AuthContext {
   clientId: string;
   scopes: ScopeType[];
   authenticated: boolean;
+}
+
+export const authStorage = new AsyncLocalStorage<AuthContext>();
+
+export function getCurrentAuthContext(): AuthContext {
+  const ctx = authStorage.getStore();
+  if (ctx) return ctx;
+  return {
+    clientId: "local-user",
+    scopes: [
+      Scope.VAULT_READ,
+      Scope.VAULT_WRITE,
+      Scope.VAULT_DELETE,
+      Scope.VAULT_ADMIN,
+      Scope.VAULT_DEVELOPER,
+    ],
+    authenticated: true,
+  };
 }
 
 export class AuthManager {

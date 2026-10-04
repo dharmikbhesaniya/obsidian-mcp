@@ -25,10 +25,12 @@ export const AppendNoteSchema = z.object({
   path: VaultRelativePathSchema,
   content: z.string().min(1, "Content cannot be empty"),
   ensureNewline: z.boolean().default(true),
+  expectedRevision: z.string().optional(),
 });
 export const PrependNoteSchema = z.object({
   path: VaultRelativePathSchema,
   content: z.string().min(1, "Content cannot be empty"),
+  expectedRevision: z.string().optional(),
 });
 export const UpdateNoteSchema = z.object({
   path: VaultRelativePathSchema,
@@ -42,6 +44,7 @@ export const MoveNoteSchema = z.object({
 export const DeleteNoteSchema = z.object({
   path: VaultRelativePathSchema,
   permanent: z.boolean().default(false),
+  expectedRevision: z.string().optional(),
 });
 
 // Search schemas
@@ -80,10 +83,12 @@ export const SetPropertySchema = z.object({
   path: VaultRelativePathSchema,
   name: z.string().min(1),
   value: z.any(),
+  expectedRevision: z.string().optional(),
 });
 export const RemovePropertySchema = z.object({
   path: VaultRelativePathSchema,
   name: z.string().min(1),
+  expectedRevision: z.string().optional(),
 });
 
 // Tasks schemas
@@ -118,6 +123,28 @@ export const ListBasesSchema = z.object({});
 export const QueryBaseSchema = z.object({
   path: VaultRelativePathSchema,
   view: z.string().optional(),
+});
+
+// Context & Discovery schemas
+export const GetNoteContextSchema = z.object({
+  path: VaultRelativePathSchema,
+});
+export const FindNotesSchema = z.object({
+  query: z.string().optional(),
+  tag: z.string().optional(),
+  folder: VaultRelativePathSchema.optional(),
+  property: z
+    .object({
+      name: z.string(),
+      value: z.any().optional(),
+    })
+    .optional(),
+  limit: z.number().int().min(1).max(100).default(20),
+});
+export const RecentChangesSchema = z.object({
+  limit: z.number().int().min(1).max(100).default(20),
+  folder: VaultRelativePathSchema.optional(),
+  sinceDays: z.number().int().min(1).max(365).optional(),
 });
 
 // Advanced CLI escape hatch

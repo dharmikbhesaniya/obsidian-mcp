@@ -10,7 +10,7 @@ import { registerTools } from "./tools/index.js";
 import { registerResources } from "./resources/index.js";
 import { registerPrompts } from "./prompts/index.js";
 
-export function createMcpServer(config: AppConfig, getAuthContext: () => AuthContext) {
+export function createMcpServer(config: AppConfig, getAuthContext?: () => AuthContext) {
   const server = new McpServer({
     name: "obsidian-mcp",
     version: "1.0.0",

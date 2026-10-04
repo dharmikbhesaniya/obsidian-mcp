@@ -88,18 +88,19 @@ Obsidian Remote MCP Server is an enterprise-grade capability runtime connecting 
 
 ## Feature & Capability Summary
 
-The server exposes 25 strongly-typed semantic tools, 7 direct read resources, and 7 guided prompts:
+The server exposes 28 strongly-typed semantic tools, 7 direct read resources, and 7 guided prompts:
 
-### Tools (25 Semantic Capabilities)
+### Tools (28 Semantic Capabilities)
 - **Vault Domain**: `obsidian_get_vault`, `obsidian_list_files`, `obsidian_get_file_info`
-- **Notes Domain**: `obsidian_read_note`, `obsidian_create_note`, `obsidian_append_note`, `obsidian_prepend_note`, `obsidian_update_note`, `obsidian_move_note`, `obsidian_delete_note`
+- **Notes Domain**: `obsidian_read_note`, `obsidian_create_note`, `obsidian_append_note`, `obsidian_prepend_note`, `obsidian_update_note`, `obsidian_move_note`, `obsidian_delete_note` (all with optimistic concurrency support)
 - **Search Domain**: `obsidian_search`, `obsidian_search_context`
+- **Context & Discovery Domain**: `obsidian_get_note_context`, `obsidian_find_notes`, `obsidian_recent_changes`
 - **Daily Notes Domain**: `obsidian_read_daily_note`, `obsidian_append_daily_note`, `obsidian_prepend_daily_note`
-- **Properties Domain**: `obsidian_get_properties`, `obsidian_get_property`, `obsidian_set_property`, `obsidian_remove_property`
+- **Properties Domain**: `obsidian_get_properties`, `obsidian_get_property`, `obsidian_set_property`, `obsidian_remove_property` (structured YAML preservation)
 - **Tasks Domain**: `obsidian_list_tasks`, `obsidian_toggle_task`
 - **Knowledge Graph Domain**: `obsidian_get_backlinks`, `obsidian_get_links`, `obsidian_get_orphans`, `obsidian_get_unresolved_links`, `obsidian_get_deadends`
 - **Tags & Bases Domain**: `obsidian_get_tags`, `obsidian_get_tag_notes`, `obsidian_list_bases`, `obsidian_query_base`
-- **Guarded Escape Hatch**: `obsidian_cli` *(gated behind `vault:developer` scope)*
+- **Guarded Escape Hatch**: `obsidian_cli` *(strictly allowlisted, gated behind `vault:developer` scope)*
 
 ### Resources (7 Direct Read Contexts)
 - `obsidian://vault`: Vault statistics, file count, and connectivity state.
@@ -428,6 +429,29 @@ mcp:
       headers:
         Authorization: "Bearer <your_raw_bearer_token>"
 ```
+
+---
+
+## Automated Test Suite
+
+The repository contains an automated test matrix covering unit logic, path isolation, security policies, concurrency control, and protocol integration:
+
+```bash
+# Execute entire test suite
+npm test
+
+# Run build typecheck
+npm run build
+```
+
+The test suite covers:
+- **Frontmatter & YAML Serialization**: Tests scalar properties, flow lists, block arrays, colons in titles, and wikilink parsing.
+- **PathGuard Security**: Strict rejection of leading slashes, path traversal (`../`), null byte injections, and symlink escapes.
+- **Timing-Safe Authentication**: Bearer token parsing, timing-safe SHA-256 verification, and scope validation.
+- **Optimistic Concurrency**: Conflict detection across note updates, appends, prepends, property mutations, and note deletions.
+- **CLI Allowlist**: Enforces command allowlisting rejecting unauthorized process execution.
+- **Context Engine**: Integration test of single-call note context assembly (content, metadata, headings, backlinks, and related notes).
+- **Protocol Discovery**: McpServer initialization and capability registration.
 
 ---
 

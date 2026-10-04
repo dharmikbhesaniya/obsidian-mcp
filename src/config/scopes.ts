@@ -62,6 +62,11 @@ export const TOOL_SCOPES: Record<string, ScopeType> = {
   obsidian_list_bases: Scope.VAULT_READ,
   obsidian_query_base: Scope.VAULT_READ,
 
+  // Context & Intelligence domain
+  obsidian_get_note_context: Scope.VAULT_READ,
+  obsidian_find_notes: Scope.VAULT_READ,
+  obsidian_recent_changes: Scope.VAULT_READ,
+
   // Advanced / Escape Hatch
   obsidian_cli: Scope.VAULT_DEVELOPER,
 };

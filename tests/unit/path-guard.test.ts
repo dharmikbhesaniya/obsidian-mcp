@@ -24,10 +24,13 @@ describe("PathGuard", () => {
     expect(res.absolutePath).toBe(path.join(tempVaultDir, "notes", "daily.md"));
   });
 
-  it("should strip leading slashes and keep inside vault", () => {
-    const res = guard.resolveSafePath("/notes/daily.md");
-    expect(res.relativePath).toBe(path.join("notes", "daily.md"));
-    expect(res.absolutePath).toBe(path.join(tempVaultDir, "notes", "daily.md"));
+  it("should reject leading slashes to enforce strictly vault-relative paths", () => {
+    expect(() => guard.resolveSafePath("/notes/daily.md")).toThrowError(ObsidianMcpError);
+    try {
+      guard.resolveSafePath("/notes/daily.md");
+    } catch (err: any) {
+      expect(err.code).toBe(ErrorCode.PATH_INVALID);
+    }
   });
 
   it("should reject directory traversal with ../", () => {

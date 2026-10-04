@@ -3,7 +3,7 @@ import { VaultService } from "../services/vault.service.js";
 
 export function registerResources(server: McpServer, vaultService: VaultService) {
   // 1. obsidian://vault
-  server.resource(
+  server.registerResource(
     "vault-info",
     "obsidian://vault",
     { description: "General vault metadata, file counts, and connectivity status", mimeType: "application/json" },
@@ -16,7 +16,7 @@ export function registerResources(server: McpServer, vaultService: VaultService)
   );
 
   // 2. obsidian://daily/today
-  server.resource(
+  server.registerResource(
     "daily-today",
     "obsidian://daily/today",
     { description: "Direct content of today's daily note", mimeType: "text/markdown" },
@@ -29,7 +29,7 @@ export function registerResources(server: McpServer, vaultService: VaultService)
   );
 
   // 3. obsidian://tasks
-  server.resource(
+  server.registerResource(
     "vault-tasks",
     "obsidian://tasks",
     { description: "Vault-wide list of pending tasks", mimeType: "application/json" },
@@ -42,7 +42,7 @@ export function registerResources(server: McpServer, vaultService: VaultService)
   );
 
   // 4. obsidian://tags
-  server.resource(
+  server.registerResource(
     "vault-tags",
     "obsidian://tags",
     { description: "Vault-wide tags inventory and counts", mimeType: "application/json" },
@@ -55,7 +55,7 @@ export function registerResources(server: McpServer, vaultService: VaultService)
   );
 
   // 5. obsidian://note/{path}
-  server.resource(
+  server.registerResource(
     "vault-note",
     new ResourceTemplate("obsidian://note/{path}", { list: undefined }),
     { description: "Read-only access to a specific vault note by relative path", mimeType: "text/markdown" },
@@ -69,7 +69,7 @@ export function registerResources(server: McpServer, vaultService: VaultService)
   );
 
   // 6. obsidian://folder/{path}
-  server.resource(
+  server.registerResource(
     "vault-folder",
     new ResourceTemplate("obsidian://folder/{path}", { list: undefined }),
     { description: "Folder contents and file listing", mimeType: "application/json" },
@@ -83,7 +83,7 @@ export function registerResources(server: McpServer, vaultService: VaultService)
   );
 
   // 7. obsidian://base/{path}
-  server.resource(
+  server.registerResource(
     "vault-base",
     new ResourceTemplate("obsidian://base/{path}", { list: undefined }),
     { description: "Direct schema and query definitions of a .base file", mimeType: "application/json" },

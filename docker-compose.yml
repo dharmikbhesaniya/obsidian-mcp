@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  obsidian-mcp:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - NODE_ENV=production
+      - MCP_TRANSPORT=http
+      - PORT=3000
+      - HOST=0.0.0.0
+      - OBSIDIAN_VAULT_PATH=/vault
+      - AUTH_ENABLED=true
+      - BEARER_TOKEN_HASH=${BEARER_TOKEN_HASH}
+    volumes:
+      - /srv/obsidian/vault:/vault

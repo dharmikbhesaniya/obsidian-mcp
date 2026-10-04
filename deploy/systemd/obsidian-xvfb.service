@@ -1,0 +1,14 @@
+[Unit]
+Description=Xvfb Virtual Framebuffer for Headless Obsidian
+After=network.target
+
+[Service]
+Type=simple
+User=obsidian
+Group=obsidian
+ExecStart=/usr/bin/Xvfb :5 -screen 0 1024x768x16
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

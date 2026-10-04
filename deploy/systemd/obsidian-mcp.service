@@ -1,0 +1,19 @@
+[Unit]
+Description=Obsidian Remote MCP Server Daemon
+After=network.target obsidian-xvfb.service
+
+[Service]
+Type=simple
+User=obsidian
+Group=obsidian
+WorkingDirectory=/opt/obsidian-mcp
+Environment=NODE_ENV=production
+Environment=DISPLAY=:5
+EnvironmentFile=/etc/obsidian-mcp/.env
+ExecStart=/usr/bin/node dist/index.js --transport=http
+Restart=always
+RestartSec=5
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target

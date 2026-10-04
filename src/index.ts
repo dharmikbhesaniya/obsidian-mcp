@@ -1,12 +1,23 @@
-/**
- * Obsidian Remote MCP Server Entrypoint
- * Standalone capability layer for remote Obsidian knowledge systems.
- */
+#!/usr/bin/env node
+import { loadConfig } from "./config/config.js";
+import { runStdioServer } from "./transport/stdio.js";
+import { runHttpServer } from "./transport/http.js";
 
-export function main() {
-  console.log("Obsidian MCP Server initialized.");
+async function main() {
+  const config = loadConfig();
+
+  // Allow CLI flag overrides e.g. --transport=http or --transport=stdio
+  const transportArg = process.argv.find((arg) => arg.startsWith("--transport="));
+  const transportMode = transportArg ? transportArg.split("=")[1] : config.MCP_TRANSPORT;
+
+  if (transportMode === "http") {
+    await runHttpServer(config);
+  } else {
+    await runStdioServer(config);
+  }
 }
 
-if (process.argv[1] && import.meta.url.endsWith(process.argv[1])) {
-  main();
-}
+main().catch((err) => {
+  console.error("Fatal server error:", err);
+  process.exit(1);
+});

@@ -335,53 +335,53 @@ obsidian-mcp/
 Use this checklist to track progress from initiation to production deployment:
 
 ### Phase 0: Specification & Foundation
-- [ ] Initialize repository configuration (`package.json`, `tsconfig.json`, `.gitignore`, `README.md`)
-- [ ] Install core dependencies (`@modelcontextprotocol/sdk`, `zod`, `dotenv`)
-- [ ] Freeze MCP v1 Contract specification and Zod input/output schemas
-- [ ] Create mock test vault for automated integration tests
+- [x] Initialize repository configuration (`package.json`, `tsconfig.json`, `.gitignore`, `README.md`)
+- [x] Install core dependencies (`@modelcontextprotocol/sdk`, `zod`, `dotenv`)
+- [x] Freeze MCP v1 Contract specification and Zod input/output schemas
+- [x] Create mock test vault for automated integration tests
 
 ### Phase 1: Core Runtime & Local Transport
-- [ ] Implement `src/config/config.ts` with strict Zod environment variable parsing
-- [ ] Implement `src/adapters/obsidian/cli.adapter.ts` with execution timeouts and error detection
-- [ ] Implement `src/transport/stdio.ts` for local IDE execution
-- [ ] Build server bootstrap in `src/server.ts` and test stdio handshake with MCP Inspector
+- [x] Implement `src/config/config.ts` with strict Zod environment variable parsing
+- [x] Implement `src/adapters/obsidian/cli.adapter.ts` with execution timeouts and error detection
+- [x] Implement `src/transport/stdio.ts` for local IDE execution
+- [x] Build server bootstrap in `src/server.ts` and test stdio handshake with MCP Inspector
 
 ### Phase 2: Core Tools & Services
-- [ ] Implement `src/security/path-guard.ts` with automated path traversal test suite
-- [ ] Implement `Vault` domain tools (`get_vault`, `list_files`, `get_file_info`)
-- [ ] Implement `Notes` domain tools (`read_note`, `create_note`, `append_note`, `prepend_note`, `update_note`)
-- [ ] Implement `Daily` domain tools (`read_daily_note`, `append_daily_note`, `prepend_daily_note`)
-- [ ] Implement `Search` domain tools (`search`, `search_context`) with structured JSON output
-- [ ] Implement `Tasks` domain tools (`list_tasks`, `toggle_task`) with `tasks all` scope
-- [ ] Implement `Properties` domain tools (`get_properties`, `set_property`, `remove_property`)
-- [ ] Implement `Links & Graph` tools (`get_backlinks`, `get_links`, `get_orphans`, `get_unresolved_links`)
-- [ ] Implement `Bases` tools (`list_bases`, `query_base`)
+- [x] Implement `src/security/path-guard.ts` with automated path traversal test suite
+- [x] Implement `Vault` domain tools (`get_vault`, `list_files`, `get_file_info`)
+- [x] Implement `Notes` domain tools (`read_note`, `create_note`, `append_note`, `prepend_note`, `update_note`)
+- [x] Implement `Daily` domain tools (`read_daily_note`, `append_daily_note`, `prepend_daily_note`)
+- [x] Implement `Search` domain tools (`search`, `search_context`) with structured JSON output
+- [x] Implement `Tasks` domain tools (`list_tasks`, `toggle_task`) with `tasks all` scope
+- [x] Implement `Properties` domain tools (`get_properties`, `set_property`, `remove_property`)
+- [x] Implement `Links & Graph` tools (`get_backlinks`, `get_links`, `get_orphans`, `get_unresolved_links`)
+- [x] Implement `Bases` tools (`list_bases`, `query_base`)
 
 ### Phase 3: Security & Authorization Engine
-- [ ] Implement Bearer token verification with SHA-256 hash comparison
-- [ ] Implement permission scope checker (`vault:read`, `vault:write`, `vault:delete`, `vault:admin`, `vault:developer`)
-- [ ] Implement preflight confirmation logic for destructive tools (`delete_note`, `move_note`)
-- [ ] Implement in-memory token-bucket rate limiter
-- [ ] Implement structured privacy-safe audit logger (`src/security/audit.ts`)
+- [x] Implement Bearer token verification with SHA-256 hash comparison
+- [x] Implement permission scope checker (`vault:read`, `vault:write`, `vault:delete`, `vault:admin`, `vault:developer`)
+- [x] Implement preflight confirmation logic for destructive tools (`delete_note`, `move_note`)
+- [x] Implement in-memory token-bucket rate limiter
+- [x] Implement structured privacy-safe audit logger (`src/security/audit.ts`)
 
 ### Phase 4: Remote Transport & Reverse Proxy
-- [ ] Implement Streamable HTTP transport (`src/transport/http.ts`) supporting SSE and JSON-RPC
-- [ ] Implement operational health endpoints (`GET /health` and `GET /ready`)
-- [ ] Create Caddy reverse proxy configuration with automated TLS
-- [ ] Create Nginx reverse proxy configuration alternative
-- [ ] Create `systemd` unit files for Obsidian Desktop (`Xvfb`) and MCP Server
+- [x] Implement Streamable HTTP transport (`src/transport/http.ts`) supporting SSE and JSON-RPC
+- [x] Implement operational health endpoints (`GET /health` and `GET /ready`)
+- [x] Create Caddy reverse proxy configuration with automated TLS
+- [x] Create Nginx reverse proxy configuration alternative
+- [x] Create `systemd` unit files for Obsidian Desktop (`Xvfb`) and MCP Server
 
 ### Phase 5: Resources & Prompt Workflows
-- [ ] Implement MCP Resources (`obsidian://vault`, `obsidian://daily/today`, `obsidian://tasks`, `obsidian://tags`)
-- [ ] Implement `daily-work-report` prompt
-- [ ] Implement `knowledge-capture` prompt
-- [ ] Implement `weekly-review` prompt
-- [ ] Implement `vault-health-check` prompt
+- [x] Implement MCP Resources (`obsidian://vault`, `obsidian://daily/today`, `obsidian://tasks`, `obsidian://tags`)
+- [x] Implement `daily-work-report` prompt
+- [x] Implement `knowledge-capture` prompt
+- [x] Implement `weekly-review` prompt
+- [x] Implement `vault-health-check` prompt
 
 ### Phase 6: Production Hardening & Testing
-- [ ] Execute security test suite (path traversal, symlink escapes, unauthorized scope attempts)
-- [ ] Execute concurrency test suite (simultaneous appends and conflict detection)
-- [ ] Validate end-to-end connectivity from remote ChatGPT, Claude Desktop, and Hermes Agent
+- [x] Execute security test suite (path traversal, symlink escapes, unauthorized scope attempts)
+- [x] Execute concurrency test suite (simultaneous appends and conflict detection)
+- [ ] Validate end-to-end connectivity from remote ChatGPT, Claude Desktop, and Hermes Agent on live VPS
 - [ ] Validate automated backup runbook for the VPS vault
 
 ---

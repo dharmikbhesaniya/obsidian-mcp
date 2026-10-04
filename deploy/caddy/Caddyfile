@@ -1,0 +1,25 @@
+# Caddy reverse proxy configuration for Obsidian Remote MCP Server
+# Automatic TLS certificates via Let's Encrypt / ZeroSSL
+
+mcp.yourdomain.com {
+    encode gzip zstd
+
+    # Route all requests to local Obsidian MCP daemon
+    reverse_proxy 127.0.0.1:3000 {
+        # Streaming and SSE buffering configuration
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+
+        # Keep-alive and timeout settings for long-lived SSE connections
+        transport http {
+            keepalive 120s
+            response_header_timeout 600s
+        }
+    }
+
+    log {
+        output file /var/log/caddy/obsidian_mcp.log
+        format json
+    }
+}

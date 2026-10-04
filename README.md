@@ -4,8 +4,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Protocol](https://img.shields.io/badge/MCP-Model_Context_Protocol-blue.svg)](https://modelcontextprotocol.io)
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B_LTS-green.svg)](https://nodejs.org)
+[![Companion Skills](https://img.shields.io/badge/Agent_Skills-Universal_Obsidian_Suite-green.svg)](https://github.com/dharmikbhesaniya/obsidian-skill)
 
 Obsidian Remote MCP Server is an enterprise-grade capability runtime connecting AI assistants and agents (ChatGPT, Claude, Codex, Cursor, and Hermes Agent) to an [Obsidian](https://obsidian.md) vault. It provides strongly-typed semantic operations, timing-safe Bearer authentication, vault path isolation, dual-transport support (stdio and Streamable HTTP/SSE), and systemd supervision for production VPS hosting.
+
+This server is accompanied by the official companion repository: [Universal Obsidian Suite (dharmikbhesaniya/obsidian-skill)](https://github.com/dharmikbhesaniya/obsidian-skill), which provides standardized Agent Skills, prompt rules, and pre-packaged IDE plugins for these tools.
 
 ---
 
@@ -13,6 +16,7 @@ Obsidian Remote MCP Server is an enterprise-grade capability runtime connecting 
 
 - [System Architecture](#system-architecture)
 - [Feature & Capability Summary](#feature--capability-summary)
+- [Companion Agent Skills & Plugins Suite](#companion-agent-skills--plugins-suite)
 - [Local Development Setup](#local-development-setup)
   - [Prerequisites](#prerequisites)
   - [Installation & Build](#installation--build)
@@ -88,21 +92,21 @@ Obsidian Remote MCP Server is an enterprise-grade capability runtime connecting 
 
 ## Feature & Capability Summary
 
-The server exposes 51 strongly-typed semantic tools (with advanced CLI escape hatch gated behind `ENABLE_ADVANCED_CLI=true`), 7 direct read resources, and 7 guided prompts:
+The server exposes 54 strongly-typed semantic tools (with advanced CLI escape hatch gated behind `ENABLE_ADVANCED_CLI=true`), 7 direct read resources, and 7 guided prompts:
 
-### Tools (51 Semantic Capabilities)
-- **Vault Domain (4 tools)**: `obsidian_list_vaults` (multi-vault inventory), `obsidian_get_vault`, `obsidian_list_files`, `obsidian_get_file_info`
+### Tools (54 Semantic Capabilities)
+- **Vault Domain (4 tools)**: `obsidian_list_vaults` (multi-vault inventory with deduplication), `obsidian_get_vault`, `obsidian_list_files` (recursive traversal & extension filtering), `obsidian_get_file_info`
 - **Notes Domain (8 tools)**: `obsidian_read_note`, `obsidian_create_note`, `obsidian_append_note`, `obsidian_prepend_note`, `obsidian_update_note`, `obsidian_patch_note` (surgical search/replace/regex editing), `obsidian_move_note`, `obsidian_delete_note` (safe atomic trash by default)
 - **Search Domain (2 tools)**: `obsidian_search`, `obsidian_search_context`
 - **Context & Discovery Domain (3 tools)**: `obsidian_get_note_context` (selective include budget controls), `obsidian_find_notes`, `obsidian_recent_changes`
 - **Daily Notes Domain (3 tools)**: `obsidian_read_daily_note`, `obsidian_append_daily_note`, `obsidian_prepend_daily_note`
 - **Bookmarks Domain (2 tools)**: `obsidian_list_bookmarks`, `obsidian_create_bookmark`
-- **Outline & Structure Domain (1 tool)**: `obsidian_get_outline` (hierarchical heading tree with line offsets)
-- **Aliases Domain (1 tool)**: `obsidian_list_aliases` (frontmatter alias resolution)
+- **Outline & Structure Domain (2 tools)**: `obsidian_get_outline`, `obsidian_outline` (hierarchical heading tree with line offsets)
+- **Aliases Domain (2 tools)**: `obsidian_list_aliases`, `obsidian_get_aliases` (frontmatter alias resolution)
 - **Templates Domain (2 tools)**: `obsidian_list_templates`, `obsidian_read_template` (variable resolution for `{{title}}`, `{{date}}`, `{{time}}`)
 - **Metrics & Stats Domain (1 tool)**: `obsidian_word_count` (words, characters, sentences, paragraphs, reading time)
 - **Random & Unique Notes (2 tools)**: `obsidian_random_note`, `obsidian_create_unique_note` (Zettelkasten style with entropy and guaranteed collision prevention)
-- **Desktop Integration (1 tool)**: `obsidian_open_note` (desktop app launch with accurate execution reporting and URI fallback)
+- **Desktop Integration (2 tools)**: `obsidian_open_note`, `obsidian_open_in_app` (desktop app launch with accurate execution reporting and URI fallback)
 - **Plugins & Customization (2 tools)**: `obsidian_list_plugins`, `obsidian_list_snippets`
 - **Commands Domain (2 tools)**: `obsidian_list_commands`, `obsidian_execute_command`
 - **Properties Domain (4 tools)**: `obsidian_get_properties`, `obsidian_get_property`, `obsidian_set_property`, `obsidian_remove_property`
@@ -128,6 +132,21 @@ The server exposes 51 strongly-typed semantic tools (with advanced CLI escape ha
 - `project-review`: Evaluates project status, open tasks, and incoming backlinks.
 - `meeting-summary`: Extracts action items and decision records from raw meeting notes.
 - `vault-health-check`: Scans for broken wikilinks and orphan notes.
+
+---
+
+## Companion Agent Skills & Plugins Suite
+
+For complete instruction sets, prompts, and IDE rule definitions that empower AI coding agents to use these MCP tools autonomously, see the official companion repository:
+
+👉 **[Universal Obsidian Suite (dharmikbhesaniya/obsidian-skill)](https://github.com/dharmikbhesaniya/obsidian-skill)**
+
+### What the Companion Suite Provides
+- **`obsidian-mcp` Skill**: Clear operational instructions, tool schemas, and best practices for AI agents executing these 54 semantic tools.
+- **Claude Code & Antigravity Plugins**: Discoverable plugins (`.claude-plugin/`) and pre-configured `.mcp.json` definitions to register this MCP server automatically.
+- **Cursor Rules & MDC**: Ready-to-copy `.cursorrules` and `.cursor/rules/obsidian.mdc` files.
+- **OpenAI & ChatGPT Tools**: Pre-built JSON function definitions ([function_tools.json](https://github.com/dharmikbhesaniya/obsidian-skill/tree/main/integrations/openai)).
+- **Complementary CLI & Markdown Skills**: Official Obsidian CLI commands, Obsidian Flavored Markdown (OFM), database Bases (`.base`), and JSON Canvas (`.canvas`) specifications.
 
 ---
 

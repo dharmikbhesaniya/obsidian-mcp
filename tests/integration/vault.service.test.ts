@@ -75,7 +75,18 @@ describe("VaultService Integration", () => {
     // Stale revision on setProperty must throw CONFLICT
     await expect(service.setProperty(notePath, "status", "done", rev4)).rejects.toThrowError(ObsidianMcpError);
 
-    // 5. createNote with overwrite=true and stale revision must throw CONFLICT
+    // 5. createNote with overwrite=true and missing expectedRevision must throw PRECONDITION_REQUIRED (428)
+    await expect(
+      service.createNote(notePath, "Blind Overwrite", undefined, true)
+    ).rejects.toThrowError(ObsidianMcpError);
+    try {
+      await service.createNote(notePath, "Blind Overwrite", undefined, true);
+    } catch (err: any) {
+      expect(err.code).toBe(ErrorCode.PRECONDITION_REQUIRED);
+      expect(err.statusCode).toBe(428);
+    }
+
+    // createNote with overwrite=true and stale revision must throw CONFLICT (409)
     await expect(
       service.createNote(notePath, "Overwritten", undefined, true, rev4)
     ).rejects.toThrowError(ObsidianMcpError);

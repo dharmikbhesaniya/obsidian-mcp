@@ -90,9 +90,11 @@ export class AuthManager {
       throw new ObsidianMcpError(ErrorCode.AUTH_REQUIRED, "Invalid access token credentials", 401);
     }
 
-    // Default authenticated client receives read and write scopes
+    // Deterministic credential identifier for rate limiting and session isolation
+    const credentialId = `client_${crypto.createHash("sha256").update(providedHash).digest("hex").slice(0, 12)}`;
+
     return {
-      clientId: "authenticated-agent",
+      clientId: credentialId,
       scopes: [Scope.VAULT_READ, Scope.VAULT_WRITE, Scope.VAULT_DELETE],
       authenticated: true,
     };

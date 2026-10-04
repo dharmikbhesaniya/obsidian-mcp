@@ -10,7 +10,21 @@ export interface AuditRecord {
 }
 
 export class AuditLogger {
+  private readonly enabled: boolean;
+
+  constructor(enabled: boolean = true) {
+    this.enabled = enabled;
+  }
+
+  public isEnabled(): boolean {
+    return this.enabled;
+  }
+
   public log(record: AuditRecord): void {
+    if (!this.enabled) {
+      return;
+    }
+
     // Structured JSON log output without exposing sensitive note bodies
     const entry = JSON.stringify({
       level: record.status === "error" ? "warn" : "info",

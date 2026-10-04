@@ -172,9 +172,18 @@ export class VaultService {
         );
       }
 
+      if (!expectedRevision) {
+        throw new ObsidianMcpError(
+          ErrorCode.PRECONDITION_REQUIRED,
+          `Overwriting existing note '${relativePath}' requires expectedRevision or ifMatch precondition to prevent blind overwrites.`,
+          428,
+          { path: relativePath }
+        );
+      }
+
       const existingContent = fs.readFileSync(absolutePath, "utf-8");
       const currentRevision = crypto.createHash("sha1").update(existingContent).digest("hex");
-      if (expectedRevision && expectedRevision !== currentRevision) {
+      if (expectedRevision !== currentRevision) {
         throw new ObsidianMcpError(
           ErrorCode.CONFLICT,
           `Concurrent edit detected on createNote overwrite. Expected revision '${expectedRevision}' but note is at '${currentRevision}'.`,

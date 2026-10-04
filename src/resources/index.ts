@@ -67,4 +67,32 @@ export function registerResources(server: McpServer, vaultService: VaultService)
       };
     }
   );
+
+  // 6. obsidian://folder/{path}
+  server.resource(
+    "vault-folder",
+    new ResourceTemplate("obsidian://folder/{path}", { list: undefined }),
+    { description: "Folder contents and file listing", mimeType: "application/json" },
+    async (uri, variables) => {
+      const folderPath = String(variables.path);
+      const data = await vaultService.listFiles(folderPath, false);
+      return {
+        contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(data, null, 2) }],
+      };
+    }
+  );
+
+  // 7. obsidian://base/{path}
+  server.resource(
+    "vault-base",
+    new ResourceTemplate("obsidian://base/{path}", { list: undefined }),
+    { description: "Direct schema and query definitions of a .base file", mimeType: "application/json" },
+    async (uri, variables) => {
+      const basePath = String(variables.path);
+      const data = await vaultService.queryBase(basePath);
+      return {
+        contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(data, null, 2) }],
+      };
+    }
+  );
 }

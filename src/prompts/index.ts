@@ -53,7 +53,58 @@ export function registerPrompts(server: McpServer) {
     })
   );
 
-  // 4. vault-health-check
+  // 4. monthly-review
+  server.prompt(
+    "monthly-review",
+    { month: z.string().optional().describe("Month in YYYY-MM format") },
+    ({ month }) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Conduct a comprehensive monthly retrospective for ${month || "this month"}. Review key decisions, completed deliverables, recurring patterns, and high-level progress across the vault.`,
+          },
+        },
+      ],
+    })
+  );
+
+  // 5. project-review
+  server.prompt(
+    "project-review",
+    { projectPath: z.string().describe("Relative path of the project note or folder") },
+    ({ projectPath }) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Review the project at '${projectPath}'. Read the project note, query related tasks with obsidian_list_tasks, examine incoming backlinks with obsidian_get_backlinks, and summarize current milestone status.`,
+          },
+        },
+      ],
+    })
+  );
+
+  // 6. meeting-summary
+  server.prompt(
+    "meeting-summary",
+    { meetingNote: z.string().describe("Relative path of the raw meeting note") },
+    ({ meetingNote }) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Extract action items, decisions, and key takeaways from '${meetingNote}'. Append action items as checkboxes and create linked decision records where appropriate.`,
+          },
+        },
+      ],
+    })
+  );
+
+  // 7. vault-health-check
   server.prompt(
     "vault-health-check",
     {},

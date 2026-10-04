@@ -58,12 +58,25 @@ export const UpdateNoteSchema = z.object({
 });
 export const PatchNoteSchema = z.object({
   path: VaultRelativePathSchema,
-  target: z.object({
-    type: z.enum(["heading", "block"]).describe("Target type: 'heading' for markdown heading or 'block' for block ID"),
-    value: z.string().min(1, "Target value cannot be empty").describe("Heading title or block identifier (e.g. 'Action Items' or '^summary')"),
-  }),
-  operation: z.enum(["replace", "append", "prepend"]).describe("Operation: replace target section/block, append after, or prepend before"),
-  content: z.string().describe("Content to insert or replace with"),
+  target: z
+    .object({
+      type: z
+        .enum(["heading", "block", "string", "regex"])
+        .describe("Target type: 'heading', 'block', 'string', or 'regex'"),
+      value: z
+        .string()
+        .min(1, "Target value cannot be empty")
+        .describe("Heading title, block identifier (e.g. '^summary'), or search text"),
+    })
+    .optional()
+    .describe("Section heading or block ID to patch"),
+  operation: z
+    .enum(["replace", "append", "prepend"])
+    .default("replace")
+    .describe("Operation: replace target section/block/text, append after, or prepend before"),
+  content: z.string().optional().describe("Content to insert or replace with"),
+  search: z.string().optional().describe("Direct search string to find and patch (alternative to target)"),
+  replace: z.string().optional().describe("Direct replacement string (alternative to content)"),
   expectedRevision: z.string().optional(),
   ifMatch: z.string().optional(),
   vault: VaultNameSchema,

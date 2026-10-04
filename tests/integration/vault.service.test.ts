@@ -402,6 +402,63 @@ See [[04-Budget/Rel1]] and [[04-Budget/Rel2]].
     expect(read.content).toContain("This is the updated quote. ^quote-1");
   });
 
+  it("should surgically patch notes via string search, regex, and direct search/replace", async () => {
+    const notePath = "string-patch-test.md";
+    await service.createNote(
+      notePath,
+      "# Target Note\n\nOriginal string here to replace.\nAnother line with [pattern-xyz].\n"
+    );
+
+    // 1. Direct search and replace
+    const patch1 = await service.patchNote(
+      notePath,
+      undefined,
+      "replace",
+      undefined,
+      undefined,
+      undefined,
+      "Original string here to replace.",
+      "Replaced string successfully."
+    );
+    expect(patch1.patched).toBe(true);
+    let read = await service.readNote(notePath);
+    expect(read.content).toContain("Replaced string successfully.");
+
+    // 2. String target with append
+    await service.patchNote(
+      notePath,
+      { type: "string", value: "Replaced string successfully." },
+      "append",
+      "Appended line after string."
+    );
+    read = await service.readNote(notePath);
+    expect(read.content).toContain("Replaced string successfully.\nAppended line after string.");
+
+    // 3. Regex target with replace
+    await service.patchNote(
+      notePath,
+      { type: "regex", value: "\\[pattern-[a-z]+\\]" },
+      "replace",
+      "[pattern-resolved]"
+    );
+    read = await service.readNote(notePath);
+    expect(read.content).toContain("Another line with [pattern-resolved].");
+
+    // 4. Missing search string throws 404
+    await expect(
+      service.patchNote(
+        notePath,
+        undefined,
+        "replace",
+        undefined,
+        undefined,
+        undefined,
+        "Nonexistent string needle",
+        "Replacement"
+      )
+    ).rejects.toThrowError(ObsidianMcpError);
+  });
+
   it("should atomically move notes and rewrite inbound backlinks across the vault", async () => {
     await service.createNote("01-Projects/alpha.md", "# Alpha Project");
     await service.createNote(

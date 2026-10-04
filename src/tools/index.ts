@@ -176,10 +176,12 @@ export function registerTools(
       vaultService.patchNote(
         args.path,
         args.target,
-        args.operation,
-        args.content,
+        args.operation || "replace",
+        args.content ?? args.replace,
         args.expectedRevision || args.ifMatch,
-        args.vault
+        args.vault,
+        args.search,
+        args.replace
       )
     )
   );

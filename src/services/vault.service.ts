@@ -144,13 +144,15 @@ export class VaultService {
   public async listVaults() {
     const list: Array<{ name: string; path: string; isDefault: boolean; totalFiles: number }> = [];
     const seenNames = new Set<string>();
+    const seenRoots = new Set<string>();
 
     for (const [name, instance] of this.vaults.entries()) {
       if (name === "default" && this.vaults.size > 1 && instance.name !== "default") {
         continue;
       }
-      if (seenNames.has(instance.name)) continue;
+      if (seenNames.has(instance.name) || seenRoots.has(instance.root)) continue;
       seenNames.add(instance.name);
+      seenRoots.add(instance.root);
 
       let totalFiles = 0;
       try {
@@ -467,11 +469,13 @@ export class VaultService {
 
   public async patchNote(
     targetPath: string,
-    target: { type: "heading" | "block"; value: string },
-    operation: "replace" | "append" | "prepend",
-    content: string,
+    target?: { type: "heading" | "block" | "string" | "regex"; value: string },
+    operation: "replace" | "append" | "prepend" = "replace",
+    content?: string,
     expectedRevision?: string,
-    vaultName?: string
+    vaultName?: string,
+    search?: string,
+    replace?: string
   ) {
     const vault = this.resolveVault(vaultName);
     const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
@@ -491,11 +495,77 @@ export class VaultService {
       );
     }
 
+    const searchNeedle = search ?? (target?.type === "string" || target?.type === "regex" ? target.value : undefined);
+    const replacementText = content !== undefined ? content : replace ?? "";
+
+    if (!target && searchNeedle === undefined) {
+      throw new ObsidianMcpError(
+        ErrorCode.VALIDATION_ERROR,
+        "Either 'target' ({ type, value }) or 'search' string must be provided for obsidian_patch_note.",
+        400
+      );
+    }
+
+    if (searchNeedle !== undefined) {
+      const isRegex = target?.type === "regex";
+      const regex = isRegex ? new RegExp(searchNeedle) : null;
+
+      if (isRegex) {
+        if (!regex!.test(existingContent)) {
+          throw new ObsidianMcpError(
+            ErrorCode.NOT_FOUND,
+            `Pattern '${searchNeedle}' not found in note '${relativePath}'.`,
+            404
+          );
+        }
+      } else {
+        if (!existingContent.includes(searchNeedle)) {
+          throw new ObsidianMcpError(
+            ErrorCode.NOT_FOUND,
+            `Search string '${searchNeedle}' not found in note '${relativePath}'.`,
+            404
+          );
+        }
+      }
+
+      let patchedContent: string;
+      if (isRegex) {
+        if (operation === "replace") {
+          patchedContent = existingContent.replace(regex!, replacementText);
+        } else if (operation === "append") {
+          patchedContent = existingContent.replace(regex!, (m) => `${m}\n${replacementText}`);
+        } else {
+          patchedContent = existingContent.replace(regex!, (m) => `${replacementText}\n${m}`);
+        }
+      } else {
+        if (operation === "replace") {
+          patchedContent = existingContent.replace(searchNeedle, replacementText);
+        } else if (operation === "append") {
+          patchedContent = existingContent.replace(searchNeedle, `${searchNeedle}\n${replacementText}`);
+        } else {
+          patchedContent = existingContent.replace(searchNeedle, `${replacementText}\n${searchNeedle}`);
+        }
+      }
+
+      AtomicFs.writeFileSync(absolutePath, patchedContent, "utf-8");
+      const newRev = crypto.createHash("sha1").update(patchedContent).digest("hex");
+      return {
+        path: relativePath,
+        patched: true,
+        target: target || { type: isRegex ? "regex" : "string", value: searchNeedle },
+        operation,
+        newRevision: newRev,
+        etag: newRev,
+        obsidianUri: this.getObsidianUri(relativePath, vault.name),
+      };
+    }
+
+    const resolvedTarget = target!;
     const lines = existingContent.split("\n");
     let updatedLines: string[] = [];
 
-    if (target.type === "heading") {
-      const cleanTargetHeading = target.value.replace(/^#+\s*/, "").trim().toLowerCase();
+    if (resolvedTarget.type === "heading") {
+      const cleanTargetHeading = resolvedTarget.value.replace(/^#+\s*/, "").trim().toLowerCase();
       let headingIndex = -1;
       let headingLevel = 0;
       let matchedHeadingText = "";
@@ -517,7 +587,7 @@ export class VaultService {
       if (headingIndex === -1) {
         throw new ObsidianMcpError(
           ErrorCode.NOT_FOUND,
-          `Heading '${target.value}' not found in note '${relativePath}'`,
+          `Heading '${resolvedTarget.value}' not found in note '${relativePath}'`,
           404
         );
       }
@@ -536,12 +606,13 @@ export class VaultService {
       const beforeSection = lines.slice(0, headingIndex);
       const afterSection = lines.slice(sectionEndIndex);
       const sectionLines = lines.slice(headingIndex + 1, sectionEndIndex);
+      const insertText = content !== undefined ? content : replace ?? "";
 
       if (operation === "replace") {
-        if (/^#{1,6}\s+/.test(content.trim())) {
-          updatedLines = [...beforeSection, content.trim(), ...(afterSection.length > 0 ? [""] : []), ...afterSection];
+        if (/^#{1,6}\s+/.test(insertText.trim())) {
+          updatedLines = [...beforeSection, insertText.trim(), ...(afterSection.length > 0 ? [""] : []), ...afterSection];
         } else {
-          updatedLines = [...beforeSection, matchedHeadingText, "", content.trim(), ...(afterSection.length > 0 ? [""] : []), ...afterSection];
+          updatedLines = [...beforeSection, matchedHeadingText, "", insertText.trim(), ...(afterSection.length > 0 ? [""] : []), ...afterSection];
         }
       } else if (operation === "append") {
         let lastNonEmpty = sectionLines.length - 1;
@@ -554,7 +625,7 @@ export class VaultService {
           matchedHeadingText,
           ...trimmedSection,
           "",
-          content.trim(),
+          insertText.trim(),
           "",
           ...afterSection,
         ];
@@ -563,14 +634,14 @@ export class VaultService {
           ...beforeSection,
           matchedHeadingText,
           "",
-          content.trim(),
+          insertText.trim(),
           "",
           ...sectionLines,
           ...afterSection,
         ];
       }
-    } else if (target.type === "block") {
-      const cleanBlockId = target.value.replace(/^\^/, "").trim();
+    } else if (resolvedTarget.type === "block") {
+      const cleanBlockId = resolvedTarget.value.replace(/^\^/, "").trim();
       const blockPattern = new RegExp(`\\^${cleanBlockId}(\\s|$)`);
       let blockIndex = -1;
 
@@ -592,17 +663,18 @@ export class VaultService {
       const beforeBlock = lines.slice(0, blockIndex);
       const targetLine = lines[blockIndex];
       const afterBlock = lines.slice(blockIndex + 1);
+      const insertText = content !== undefined ? content : replace ?? "";
 
       if (operation === "replace") {
-        let newBlock = content.trim();
+        let newBlock = insertText.trim();
         if (!newBlock.includes(`^${cleanBlockId}`)) {
           newBlock = `${newBlock} ^${cleanBlockId}`;
         }
         updatedLines = [...beforeBlock, newBlock, ...afterBlock];
       } else if (operation === "append") {
-        updatedLines = [...beforeBlock, targetLine, content.trim(), ...afterBlock];
+        updatedLines = [...beforeBlock, targetLine, insertText.trim(), ...afterBlock];
       } else if (operation === "prepend") {
-        updatedLines = [...beforeBlock, content.trim(), targetLine, ...afterBlock];
+        updatedLines = [...beforeBlock, insertText.trim(), targetLine, ...afterBlock];
       }
     }
 
@@ -613,7 +685,7 @@ export class VaultService {
     return {
       path: relativePath,
       patched: true,
-      target,
+      target: resolvedTarget,
       operation,
       newRevision,
       etag: newRevision,

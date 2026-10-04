@@ -26,17 +26,14 @@ export class AuditLogger {
       return;
     }
 
-    // Structured JSON log output without exposing sensitive note bodies
+    // Structured JSON log output to stderr without exposing sensitive note bodies.
+    // In stdio MCP transport, stdout is strictly reserved for JSON-RPC 2.0 protocol frames.
     const entry = JSON.stringify({
       level: record.status === "error" ? "warn" : "info",
       type: "mcp_audit",
       ...record,
     });
 
-    if (record.status === "error") {
-      console.error(entry);
-    } else {
-      console.log(entry);
-    }
+    console.error(entry);
   }
 }

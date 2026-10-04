@@ -59,6 +59,23 @@ describe("PathGuard", () => {
     fs.rmSync(outsideDir, { recursive: true, force: true });
   });
 
+  it("should reject parent directory symlink escapes even when target note does not exist yet", () => {
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "outside-parent-dir-"));
+    const symlinkParent = path.join(tempVaultDir, "external-folder");
+    fs.symlinkSync(outsideDir, symlinkParent);
+
+    // target file does NOT exist yet inside the symlinked folder
+    const nonExistentPath = "external-folder/deep/new-note.md";
+    expect(() => guard.resolveSafePath(nonExistentPath)).toThrowError(ObsidianMcpError);
+    try {
+      guard.resolveSafePath(nonExistentPath);
+    } catch (err: any) {
+      expect(err.code).toBe(ErrorCode.PATH_INVALID);
+    }
+
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  });
+
   it("should reject access to internal reserved directories unless allowReserved is true", () => {
     const reservedPaths = [
       ".obsidian/workspace.json",

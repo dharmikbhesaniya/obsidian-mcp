@@ -40,7 +40,9 @@ describe("MCP Protocol & Capability Registration", () => {
     const { vaultService } = createMcpServer(testConfig);
 
     const vaultMeta = await vaultService.getVault();
-    expect(vaultMeta.status).toBe("connected");
+    expect(vaultMeta.status).toBe("degraded");
+    expect(vaultMeta.vaultAccessible).toBe(true);
+    expect(vaultMeta.obsidianCli).toBe("unavailable");
     expect(vaultMeta.totalFiles).toBe(0);
 
     await vaultService.createNote("index.md", "# Welcome to Knowledge Base");

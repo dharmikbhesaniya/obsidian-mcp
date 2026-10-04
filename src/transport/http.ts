@@ -1,5 +1,4 @@
 import express, { Request, Response } from "express";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
@@ -8,7 +7,7 @@ import { AppConfig } from "../config/config.js";
 import { createMcpServer } from "../server.js";
 import { AuthContext, authStorage } from "../security/auth.js";
 
-interface SseSessionRecord {
+export interface SseSessionRecord {
   server: McpServer;
   transport: SSEServerTransport;
   auth: AuthContext;
@@ -16,25 +15,17 @@ interface SseSessionRecord {
   lastActive: number;
 }
 
-export async function runHttpServer(config: AppConfig) {
+export async function createHttpApp(config: AppConfig) {
   const app = express();
   app.use(express.json({ limit: "10mb" }));
 
   // Shared subsystem instances for health and authentication
   const { pathGuard, cliAdapter, authManager } = createMcpServer(config);
 
-  // 1. Native Streamable HTTP Transport (/mcp)
+  // 1. Native Streamable HTTP Transport (/mcp) - Stateless Mode
   const { server: streamableServer } = createMcpServer(config);
-  const streamableSessions = new Set<string>();
-
   const streamableTransport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => crypto.randomUUID(),
-    onsessioninitialized: (sessionId: string) => {
-      streamableSessions.add(sessionId);
-    },
-    onsessionclosed: (sessionId: string) => {
-      streamableSessions.delete(sessionId);
-    },
+    sessionIdGenerator: undefined,
   });
 
   await streamableServer.connect(streamableTransport);
@@ -64,8 +55,7 @@ export async function runHttpServer(config: AppConfig) {
     res.json({
       status: "ok",
       mcp: "running",
-      activeSessions: streamableSessions.size + sseSessions.size,
-      streamableSessions: streamableSessions.size,
+      activeSessions: sseSessions.size,
       sseSessions: sseSessions.size,
       uptimeSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
@@ -78,9 +68,10 @@ export async function runHttpServer(config: AppConfig) {
 
     const isReady = vaultExists;
     res.status(isReady ? 200 : 503).json({
-      status: isReady ? "ready" : "unready",
+      status: isReady ? (obsidianReachable ? "ready" : "degraded") : "unready",
       vaultAccessible: vaultExists,
       obsidianConnected: obsidianReachable,
+      obsidianCli: obsidianReachable ? "connected" : "unavailable",
       timestamp: new Date().toISOString(),
     });
   });
@@ -148,6 +139,16 @@ export async function runHttpServer(config: AppConfig) {
         return;
       }
 
+      // Security: Bind SSE session to authenticated client ID
+      if (session.auth.clientId !== auth.clientId) {
+        res.status(403).json({
+          error: "Forbidden: SSE session was initiated by a different client",
+          sessionClient: session.auth.clientId,
+          requestClient: auth.clientId,
+        });
+        return;
+      }
+
       await authStorage.run(auth, async () => {
         session.lastActive = Date.now();
         await session.transport.handlePostMessage(req, res);
@@ -158,6 +159,17 @@ export async function runHttpServer(config: AppConfig) {
   };
 
   app.post("/messages", handleMessages);
+
+  return {
+    app,
+    sseSessions,
+    streamableTransport,
+    cleanupInterval,
+  };
+}
+
+export async function runHttpServer(config: AppConfig) {
+  const { app, sseSessions, streamableTransport, cleanupInterval } = await createHttpApp(config);
 
   const httpServer = app.listen(config.PORT, config.HOST, () => {
     console.log(
@@ -176,7 +188,7 @@ export async function runHttpServer(config: AppConfig) {
       // Ignore close error
     }
 
-    for (const [id, record] of sseSessions.entries()) {
+    for (const [_id, record] of sseSessions.entries()) {
       try {
         await record.transport.close();
       } catch {
@@ -199,4 +211,6 @@ export async function runHttpServer(config: AppConfig) {
 
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
+
+  return { httpServer, shutdown };
 }

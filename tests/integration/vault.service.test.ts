@@ -75,11 +75,21 @@ describe("VaultService Integration", () => {
     // Stale revision on setProperty must throw CONFLICT
     await expect(service.setProperty(notePath, "status", "done", rev4)).rejects.toThrowError(ObsidianMcpError);
 
-    // 5. deleteNote with stale revision must throw CONFLICT
-    await expect(service.deleteNote(notePath, false, rev4)).rejects.toThrowError(ObsidianMcpError);
+    // 5. createNote with overwrite=true and stale revision must throw CONFLICT
+    await expect(
+      service.createNote(notePath, "Overwritten", undefined, true, rev4)
+    ).rejects.toThrowError(ObsidianMcpError);
+
+    // createNote with overwrite=true and matching revision succeeds
+    const overwriteRes = await service.createNote(notePath, "Overwritten Valid", undefined, true, rev5);
+    expect(overwriteRes.created).toBe(true);
+    const rev6 = overwriteRes.revision;
+
+    // 6. deleteNote with stale revision must throw CONFLICT
+    await expect(service.deleteNote(notePath, false, rev5)).rejects.toThrowError(ObsidianMcpError);
 
     // deleteNote with valid revision succeeds
-    const delRes = await service.deleteNote(notePath, false, rev5);
+    const delRes = await service.deleteNote(notePath, false, rev6);
     expect(delRes.deleted).toBe(true);
   });
 

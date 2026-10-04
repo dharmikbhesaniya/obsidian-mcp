@@ -16,10 +16,12 @@ const ConfigSchema = z.object({
 
   // Security
   AUTH_ENABLED: z
-    .string()
-    .transform((val) => val === "true" || val === "1")
-    .default("false"),
+    .union([z.boolean(), z.string().transform((val) => val === "true" || val === "1")])
+    .default(false),
   BEARER_TOKEN_HASH: z.string().optional(),
+  AUDIT_LOG_ENABLED: z
+    .union([z.boolean(), z.string().transform((val) => val === "true" || val === "1")])
+    .default(true),
 
   // Operational limits
   RATE_LIMIT_PER_MINUTE: z.coerce.number().default(120),
@@ -28,15 +30,21 @@ const ConfigSchema = z.object({
 
   // Feature flags
   ENABLE_ADVANCED_CLI: z
-    .string()
-    .transform((val) => val === "true" || val === "1")
-    .default("false"),
+    .union([z.boolean(), z.string().transform((val) => val === "true" || val === "1")])
+    .default(false),
   ENABLE_DESTRUCTIVE_TOOLS: z
-    .string()
-    .transform((val) => val === "true" || val === "1")
-    .default("true"),
+    .union([z.boolean(), z.string().transform((val) => val === "true" || val === "1")])
+    .default(true),
 
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+}).superRefine((data, ctx) => {
+  if (data.NODE_ENV === "production" && data.MCP_TRANSPORT === "http" && !data.AUTH_ENABLED) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Fatal security violation: Production HTTP transport cannot run with AUTH_ENABLED=false.",
+      path: ["AUTH_ENABLED"],
+    });
+  }
 });
 
 export type AppConfig = z.infer<typeof ConfigSchema>;

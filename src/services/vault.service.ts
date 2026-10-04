@@ -77,10 +77,14 @@ export class VaultService {
       // Fallback
     }
 
+    const cliReachable = await this.cliAdapter.checkReachability();
+
     return {
       vaultId: path.basename(root),
       name: path.basename(root),
-      status: "connected",
+      status: cliReachable ? "connected" : "degraded",
+      vaultAccessible: true,
+      obsidianCli: cliReachable ? "connected" : "unavailable",
       totalFiles,
     };
   }
@@ -151,28 +155,46 @@ export class VaultService {
     };
   }
 
-  public async createNote(targetPath: string, content: string = "", template?: string, overwrite: boolean = false) {
+  public async createNote(
+    targetPath: string,
+    content: string = "",
+    template?: string,
+    overwrite: boolean = false,
+    expectedRevision?: string
+  ) {
     const { relativePath, absolutePath } = this.pathGuard.resolveSafePath(targetPath);
-    if (fs.existsSync(absolutePath) && !overwrite) {
-      throw new ObsidianMcpError(
-        ErrorCode.CONFLICT,
-        `Note '${relativePath}' already exists. Specify overwrite=true to replace.`,
-        409
-      );
+    if (fs.existsSync(absolutePath)) {
+      if (!overwrite) {
+        throw new ObsidianMcpError(
+          ErrorCode.CONFLICT,
+          `Note '${relativePath}' already exists. Specify overwrite=true to replace.`,
+          409
+        );
+      }
+
+      const existingContent = fs.readFileSync(absolutePath, "utf-8");
+      const currentRevision = crypto.createHash("sha1").update(existingContent).digest("hex");
+      if (expectedRevision && expectedRevision !== currentRevision) {
+        throw new ObsidianMcpError(
+          ErrorCode.CONFLICT,
+          `Concurrent edit detected on createNote overwrite. Expected revision '${expectedRevision}' but note is at '${currentRevision}'.`,
+          409,
+          { expectedRevision, actualRevision: currentRevision }
+        );
+      }
     }
 
     // Ensure parent directory exists
     fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
 
-    // Use CLI create command with silent flag if CLI is available, otherwise direct fs write
-    try {
-      const args = [`path=${relativePath}`, "silent"];
-      if (template) args.push(`template=${template}`);
+    // If template specified, CLI execution is required
+    if (template) {
+      const args = [`path=${relativePath}`, "silent", `template=${template}`];
       await this.cliAdapter.execute("create", args);
       if (content) {
         AtomicFs.writeFileSync(absolutePath, content, "utf-8");
       }
-    } catch {
+    } else {
       AtomicFs.writeFileSync(absolutePath, content, "utf-8");
     }
 

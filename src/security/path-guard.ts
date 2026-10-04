@@ -58,24 +58,35 @@ export class PathGuard {
       );
     }
 
-    // Check for symlink traversal if file or parent exists
+    // Check for symlink traversal by verifying the nearest existing ancestor
     try {
-      if (fs.existsSync(resolved)) {
-        const real = fs.realpathSync(resolved);
-        const realIsInside =
-          real === this.vaultRoot || real.startsWith(this.vaultRoot + path.sep);
-        if (!realIsInside) {
+      let currentCheck = resolved;
+      while (currentCheck !== path.dirname(currentCheck) && !fs.existsSync(currentCheck)) {
+        currentCheck = path.dirname(currentCheck);
+      }
+
+      if (fs.existsSync(currentCheck)) {
+        const realAncestor = fs.realpathSync(currentCheck);
+        const ancestorIsInside =
+          realAncestor === this.vaultRoot || realAncestor.startsWith(this.vaultRoot + path.sep);
+        if (!ancestorIsInside) {
           throw new ObsidianMcpError(
             ErrorCode.PATH_INVALID,
-            `Symlink escape detected. Path points outside vault root.`,
+            `Symlink escape detected. Ancestor directory resolves outside vault root.`,
             400,
-            { inputPath }
+            { inputPath, nearestAncestor: currentCheck }
           );
         }
       }
     } catch (err: any) {
       if (err instanceof ObsidianMcpError) throw err;
-      // If path does not exist, proceed
+      // If filesystem check fails unexpectedly, bubble up error
+      throw new ObsidianMcpError(
+        ErrorCode.PATH_INVALID,
+        `Failed to verify path safety: ${err.message}`,
+        400,
+        { inputPath }
+      );
     }
 
     const relative = path.relative(this.vaultRoot, resolved);

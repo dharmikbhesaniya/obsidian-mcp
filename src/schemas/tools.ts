@@ -21,6 +21,8 @@ export const CreateNoteSchema = z.object({
   content: z.string().default(""),
   template: z.string().optional(),
   overwrite: z.boolean().default(false),
+  expectedRevision: z.string().optional(),
+  ifMatch: z.string().optional(),
 });
 export const AppendNoteSchema = z.object({
   path: VaultRelativePathSchema,

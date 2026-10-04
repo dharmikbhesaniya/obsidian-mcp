@@ -19,7 +19,9 @@ export const ALLOWED_CLI_COMMANDS = new Set([
   "version",
   "search",
   "tasks",
+  "task",
   "backlinks",
+  "links",
   "orphans",
   "unresolved",
   "deadends",
@@ -29,6 +31,21 @@ export const ALLOWED_CLI_COMMANDS = new Set([
   "bases",
   "outline",
   "daily:read",
+  "daily:path",
+  "bookmarks",
+  "bookmark",
+  "aliases",
+  "templates",
+  "template:read",
+  "wordcount",
+  "random",
+  "random:read",
+  "unique",
+  "open",
+  "plugins",
+  "snippets",
+  "commands",
+  "command",
 ]);
 
 export function stripObsidianComments(content: string): string {
@@ -1675,5 +1692,396 @@ export class VaultService {
       recentChanges: sliced,
       total: sliced.length,
     };
+  }
+
+  // --- BOOKMARKS DOMAIN ---
+
+  public async listBookmarks(vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    try {
+      const res = await this.cliAdapter.execute("bookmarks", [`vault=${vault.name}`, "verbose", "format=json"]);
+      const parsed = JSON.parse(res.stdout);
+      return { bookmarks: parsed };
+    } catch {
+      const bookmarkFile = path.join(vault.pathGuard.getVaultRoot(), ".obsidian", "bookmarks.json");
+      if (fs.existsSync(bookmarkFile)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(bookmarkFile, "utf-8"));
+          return { bookmarks: parsed.items || parsed || [] };
+        } catch {
+          // ignore parse error
+        }
+      }
+      return { bookmarks: [] };
+    }
+  }
+
+  public async createBookmark(targetPath: string, subpath?: string, title?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
+    if (!fs.existsSync(absolutePath)) {
+      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `File '${relativePath}' not found to bookmark`, 404);
+    }
+    const bookmarkTitle = title || path.basename(relativePath, ".md");
+    try {
+      const args = [`vault=${vault.name}`, `file=${relativePath}`, `title=${bookmarkTitle}`];
+      if (subpath) args.push(`subpath=${subpath}`);
+      await this.cliAdapter.execute("bookmark", args);
+      return { bookmarked: true, path: relativePath, title: bookmarkTitle };
+    } catch {
+      const dotObsidian = path.join(vault.pathGuard.getVaultRoot(), ".obsidian");
+      fs.mkdirSync(dotObsidian, { recursive: true });
+      const bookmarkFile = path.join(dotObsidian, "bookmarks.json");
+      let data: { items: any[] } = { items: [] };
+      if (fs.existsSync(bookmarkFile)) {
+        try {
+          data = JSON.parse(fs.readFileSync(bookmarkFile, "utf-8"));
+          if (!Array.isArray(data.items)) data.items = [];
+        } catch {
+          data = { items: [] };
+        }
+      }
+      data.items.push({
+        type: "file",
+        path: relativePath,
+        subpath: subpath || undefined,
+        title: bookmarkTitle,
+        ctime: Date.now(),
+      });
+      AtomicFs.writeFileSync(bookmarkFile, JSON.stringify(data, null, 2), "utf-8");
+      return { bookmarked: true, path: relativePath, title: bookmarkTitle };
+    }
+  }
+
+  // --- OUTLINE DOMAIN ---
+
+  public async getOutline(targetPath: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
+    if (!fs.existsSync(absolutePath)) {
+      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist`, 404);
+    }
+    const content = fs.readFileSync(absolutePath, "utf-8");
+    const lines = content.split(/\r?\n/);
+    const outline: Array<{ level: number; text: string; line: number }> = [];
+    let inCodeBlock = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.trim().startsWith("```")) {
+        inCodeBlock = !inCodeBlock;
+        continue;
+      }
+      if (inCodeBlock) continue;
+      const match = line.match(/^(#{1,6})\s+(.+)$/);
+      if (match) {
+        outline.push({
+          level: match[1].length,
+          text: match[2].trim(),
+          line: i + 1,
+        });
+      }
+    }
+    return { path: relativePath, totalHeadings: outline.length, headings: outline };
+  }
+
+  // --- ALIASES DOMAIN ---
+
+  public async listAliases(targetPath?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    if (targetPath) {
+      const note = await this.readNote(targetPath, false, vault.name);
+      const rawAliases = note.frontmatter.aliases ?? note.frontmatter.alias;
+      const aliases = Array.isArray(rawAliases)
+        ? rawAliases.map(String)
+        : typeof rawAliases === "string"
+        ? [rawAliases]
+        : [];
+      return { path: note.path, aliases };
+    }
+
+    const root = vault.pathGuard.getVaultRoot();
+    const aliasMap: Record<string, string> = {};
+    const walk = (dir: string) => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.name.startsWith(".")) continue;
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (e.name.endsWith(".md")) {
+          const content = fs.readFileSync(full, "utf-8");
+          const parsed = parseNoteContent(content);
+          const rawAliases = parsed.frontmatter.aliases ?? parsed.frontmatter.alias;
+          const aliases = Array.isArray(rawAliases)
+            ? rawAliases.map(String)
+            : typeof rawAliases === "string"
+            ? [rawAliases]
+            : [];
+          const rel = path.relative(root, full);
+          for (const a of aliases) {
+            aliasMap[a] = rel;
+          }
+        }
+      }
+    };
+    walk(root);
+    return { totalAliases: Object.keys(aliasMap).length, aliases: aliasMap };
+  }
+
+  // --- TEMPLATES DOMAIN ---
+
+  public async listTemplates(folder?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const root = vault.pathGuard.getVaultRoot();
+    const searchDirs: string[] = [];
+    if (folder) {
+      searchDirs.push(vault.pathGuard.resolveSafePath(folder).absolutePath);
+    } else {
+      const candidates = ["Templates", "templates", "00-Templates", "_templates", "Template"];
+      for (const c of candidates) {
+        const full = path.join(root, c);
+        if (fs.existsSync(full) && fs.statSync(full).isDirectory()) {
+          searchDirs.push(full);
+        }
+      }
+      if (searchDirs.length === 0) {
+        searchDirs.push(root);
+      }
+    }
+
+    const templates: string[] = [];
+    for (const dir of searchDirs) {
+      if (!fs.existsSync(dir)) continue;
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.name.startsWith(".")) continue;
+        const full = path.join(dir, e.name);
+        if (e.isFile() && e.name.endsWith(".md")) {
+          templates.push(path.relative(root, full));
+        }
+      }
+    }
+    return { templates };
+  }
+
+  public async readTemplate(name: string, title?: string, resolve: boolean = true, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const root = vault.pathGuard.getVaultRoot();
+    let templatePath = "";
+
+    try {
+      const safe = vault.pathGuard.resolveSafePath(name);
+      if (fs.existsSync(safe.absolutePath)) {
+        templatePath = safe.absolutePath;
+      }
+    } catch {
+      // ignore
+    }
+
+    if (!templatePath) {
+      const cleanName = name.endsWith(".md") ? name : `${name}.md`;
+      const walk = (dir: string) => {
+        if (templatePath) return;
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const e of entries) {
+          if (e.name.startsWith(".")) continue;
+          const full = path.join(dir, e.name);
+          if (e.isDirectory()) walk(full);
+          else if (e.name === cleanName || path.basename(e.name, ".md") === name) {
+            templatePath = full;
+            return;
+          }
+        }
+      };
+      walk(root);
+    }
+
+    if (!templatePath || !fs.existsSync(templatePath)) {
+      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Template '${name}' not found in vault`, 404);
+    }
+
+    let rawContent = fs.readFileSync(templatePath, "utf-8");
+    if (resolve) {
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const resolvedTitle = title || path.basename(name, ".md");
+      const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      const timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+      rawContent = rawContent
+        .replace(/{{title}}/g, resolvedTitle)
+        .replace(/{{date}}/g, dateStr)
+        .replace(/{{time}}/g, timeStr)
+        .replace(/{{date:YYYY-MM-DD}}/g, dateStr)
+        .replace(/{{date:YYYYMMDD}}/g, `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`);
+    }
+
+    return {
+      template: path.relative(root, templatePath),
+      content: rawContent,
+      resolved: resolve,
+    };
+  }
+
+  // --- STATS & WORD COUNT DOMAIN ---
+
+  public async wordCount(targetPath: string, vaultName?: string) {
+    const note = await this.readNote(targetPath, true, vaultName);
+    const content = note.content;
+    const words = content.trim().split(/\s+/).filter(Boolean).length;
+    const characters = content.length;
+    const charactersWithoutSpaces = content.replace(/\s+/g, "").length;
+    const sentences = content.split(/[.!?]+/).filter((s) => s.trim().length > 0).length;
+    const paragraphs = content.split(/\n\s*\n/).filter((p) => p.trim().length > 0).length;
+    const readingTimeMinutes = Math.ceil(words / 200);
+
+    return {
+      path: note.path,
+      words,
+      characters,
+      charactersWithoutSpaces,
+      sentences,
+      paragraphs,
+      readingTimeMinutes,
+    };
+  }
+
+  // --- RANDOM & DISCOVERY DOMAIN ---
+
+  public async randomNote(folder?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const { files } = await this.listFiles(folder, true, vault.name);
+    const mdFiles = files.filter((f) => f.type === "file" && f.path.endsWith(".md"));
+    if (mdFiles.length === 0) {
+      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `No markdown notes found to select a random note`, 404);
+    }
+    const chosen = mdFiles[Math.floor(Math.random() * mdFiles.length)];
+    return this.readNote(chosen.path, false, vault.name);
+  }
+
+  // --- UNIQUE / ZETTELKASTEN DOMAIN ---
+
+  public async createUniqueNote(
+    title: string = "",
+    content: string = "",
+    folder?: string,
+    vaultName?: string
+  ) {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const id = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const cleanTitle = title.trim();
+    const noteName = cleanTitle ? `${id} ${cleanTitle}.md` : `${id}.md`;
+    const targetPath = folder ? path.join(folder, noteName) : noteName;
+
+    return this.createNote(targetPath, content, undefined, false, undefined, vaultName);
+  }
+
+  // --- DESKTOP INTEGRATION DOMAIN ---
+
+  public async openNote(targetPath: string, newTab: boolean = false, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const { relativePath, absolutePath } = vault.pathGuard.resolveSafePath(targetPath);
+    if (!fs.existsSync(absolutePath)) {
+      throw new ObsidianMcpError(ErrorCode.NOT_FOUND, `Note '${relativePath}' does not exist to open`, 404);
+    }
+    const uri = this.getObsidianUri(relativePath, vault.name);
+    try {
+      const args = [`vault=${vault.name}`, `file=${relativePath}`];
+      if (newTab) args.push("newtab");
+      await this.cliAdapter.execute("open", args);
+    } catch {
+      // CLI not running; obsidianUri is returned for opening
+    }
+    return {
+      path: relativePath,
+      opened: true,
+      obsidianUri: uri,
+    };
+  }
+
+  // --- PLUGINS & SNIPPETS DOMAIN ---
+
+  public async listPlugins(vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const dotObsidian = path.join(vault.pathGuard.getVaultRoot(), ".obsidian");
+    let communityPlugins: string[] = [];
+    let corePlugins: Record<string, boolean> = {};
+
+    const commFile = path.join(dotObsidian, "community-plugins.json");
+    if (fs.existsSync(commFile)) {
+      try {
+        communityPlugins = JSON.parse(fs.readFileSync(commFile, "utf-8"));
+      } catch {
+        // ignore
+      }
+    }
+
+    const coreFile = path.join(dotObsidian, "core-plugins.json");
+    if (fs.existsSync(coreFile)) {
+      try {
+        corePlugins = JSON.parse(fs.readFileSync(coreFile, "utf-8"));
+      } catch {
+        // ignore
+      }
+    }
+
+    return {
+      communityPlugins,
+      corePlugins,
+      totalCommunity: communityPlugins.length,
+    };
+  }
+
+  public async listSnippets(vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const dotObsidian = path.join(vault.pathGuard.getVaultRoot(), ".obsidian");
+    const snippetsDir = path.join(dotObsidian, "snippets");
+    let enabledSnippets: string[] = [];
+
+    const appearanceFile = path.join(dotObsidian, "appearance.json");
+    if (fs.existsSync(appearanceFile)) {
+      try {
+        const appJson = JSON.parse(fs.readFileSync(appearanceFile, "utf-8"));
+        if (Array.isArray(appJson.enabledCssSnippets)) {
+          enabledSnippets = appJson.enabledCssSnippets;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const snippets: Array<{ name: string; enabled: boolean }> = [];
+    if (fs.existsSync(snippetsDir)) {
+      const entries = fs.readdirSync(snippetsDir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.name.endsWith(".css")) {
+          const snippetName = path.basename(e.name, ".css");
+          snippets.push({
+            name: snippetName,
+            enabled: enabledSnippets.includes(snippetName),
+          });
+        }
+      }
+    }
+
+    return { totalSnippets: snippets.length, snippets };
+  }
+
+  // --- COMMANDS DOMAIN ---
+
+  public async listCommands(filter?: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const args = [`vault=${vault.name}`];
+    if (filter) args.push(`filter=${filter}`);
+    const res = await this.cliAdapter.execute("commands", args);
+    const commands = res.stdout.split("\n").filter(Boolean);
+    return { total: commands.length, commands };
+  }
+
+  public async executeCommand(commandId: string, vaultName?: string) {
+    const vault = this.resolveVault(vaultName);
+    const res = await this.cliAdapter.execute("command", [`vault=${vault.name}`, `id=${commandId}`]);
+    return { commandId, executed: true, output: res.stdout };
   }
 }

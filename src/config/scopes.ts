@@ -70,6 +70,40 @@ export const TOOL_SCOPES: Record<string, ScopeType> = {
   obsidian_find_notes: Scope.VAULT_READ,
   obsidian_recent_changes: Scope.VAULT_READ,
 
+  // Bookmarks domain
+  obsidian_list_bookmarks: Scope.VAULT_READ,
+  obsidian_create_bookmark: Scope.VAULT_WRITE,
+
+  // Outline domain
+  obsidian_get_outline: Scope.VAULT_READ,
+
+  // Aliases domain
+  obsidian_list_aliases: Scope.VAULT_READ,
+
+  // Templates domain
+  obsidian_list_templates: Scope.VAULT_READ,
+  obsidian_read_template: Scope.VAULT_READ,
+
+  // Word Count & Stats domain
+  obsidian_word_count: Scope.VAULT_READ,
+
+  // Random & Discovery domain
+  obsidian_random_note: Scope.VAULT_READ,
+
+  // Unique Notes domain
+  obsidian_create_unique_note: Scope.VAULT_WRITE,
+
+  // Desktop Integration domain
+  obsidian_open_note: Scope.VAULT_READ,
+
+  // Plugins & Snippets domain
+  obsidian_list_plugins: Scope.VAULT_READ,
+  obsidian_list_snippets: Scope.VAULT_READ,
+
+  // Commands domain
+  obsidian_list_commands: Scope.VAULT_READ,
+  obsidian_execute_command: Scope.VAULT_DEVELOPER,
+
   // Advanced / Escape Hatch
   obsidian_cli: Scope.VAULT_DEVELOPER,
 };

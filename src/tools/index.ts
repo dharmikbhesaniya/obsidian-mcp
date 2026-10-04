@@ -444,7 +444,145 @@ export function registerTools(
     wrapHandler("obsidian_recent_changes", (args) => vaultService.recentChanges(args, args.vault))
   );
 
-  // 10. Escape Hatch (Gated behind ENABLE_ADVANCED_CLI and vault:developer scope)
+  // 10. Bookmarks Domain
+  server.registerTool(
+    "obsidian_list_bookmarks",
+    {
+      description: "Lists all bookmarks in the vault (files, headings, folders, searches)",
+      inputSchema: Schemas.ListBookmarksSchema.shape,
+    },
+    wrapHandler("obsidian_list_bookmarks", (args) => vaultService.listBookmarks(args.vault))
+  );
+  server.registerTool(
+    "obsidian_create_bookmark",
+    {
+      description: "Creates a new bookmark for a file, heading, or folder",
+      inputSchema: Schemas.CreateBookmarkSchema.shape,
+    },
+    wrapHandler("obsidian_create_bookmark", (args) =>
+      vaultService.createBookmark(args.path, args.subpath, args.title, args.vault)
+    )
+  );
+
+  // 11. Outline & Structure Domain
+  server.registerTool(
+    "obsidian_get_outline",
+    {
+      description: "Returns the structured heading outline with line numbers for a note",
+      inputSchema: Schemas.GetOutlineSchema.shape,
+    },
+    wrapHandler("obsidian_get_outline", (args) => vaultService.getOutline(args.path, args.vault))
+  );
+
+  // 12. Aliases Domain
+  server.registerTool(
+    "obsidian_list_aliases",
+    {
+      description: "Lists all frontmatter aliases across the vault or for a specific note",
+      inputSchema: Schemas.ListAliasesSchema.shape,
+    },
+    wrapHandler("obsidian_list_aliases", (args) => vaultService.listAliases(args.path, args.vault))
+  );
+
+  // 13. Templates Domain
+  server.registerTool(
+    "obsidian_list_templates",
+    {
+      description: "Lists available template files in the vault",
+      inputSchema: Schemas.ListTemplatesSchema.shape,
+    },
+    wrapHandler("obsidian_list_templates", (args) => vaultService.listTemplates(args.folder, args.vault))
+  );
+  server.registerTool(
+    "obsidian_read_template",
+    {
+      description: "Reads a template with automatic resolution of {{title}}, {{date}}, and {{time}} variables",
+      inputSchema: Schemas.ReadTemplateSchema.shape,
+    },
+    wrapHandler("obsidian_read_template", (args) =>
+      vaultService.readTemplate(args.name, args.title, args.resolve, args.vault)
+    )
+  );
+
+  // 14. Metrics & Word Count Domain
+  server.registerTool(
+    "obsidian_word_count",
+    {
+      description: "Computes word count, character count, reading time, sentences, and paragraphs for a note",
+      inputSchema: Schemas.WordCountSchema.shape,
+    },
+    wrapHandler("obsidian_word_count", (args) => vaultService.wordCount(args.path, args.vault))
+  );
+
+  // 15. Random & Discovery Domain
+  server.registerTool(
+    "obsidian_random_note",
+    {
+      description: "Selects and reads a random note from the vault or a specified folder",
+      inputSchema: Schemas.RandomNoteSchema.shape,
+    },
+    wrapHandler("obsidian_random_note", (args) => vaultService.randomNote(args.folder, args.vault))
+  );
+
+  // 16. Unique / Zettelkasten Note Domain
+  server.registerTool(
+    "obsidian_create_unique_note",
+    {
+      description: "Creates a timestamped unique note (Zettelkasten style: YYYYMMDDHHmm Title.md)",
+      inputSchema: Schemas.CreateUniqueNoteSchema.shape,
+    },
+    wrapHandler("obsidian_create_unique_note", (args) =>
+      vaultService.createUniqueNote(args.title, args.content, args.folder, args.vault)
+    )
+  );
+
+  // 17. Desktop Integration Domain
+  server.registerTool(
+    "obsidian_open_note",
+    {
+      description: "Opens a note in the Obsidian desktop application interface",
+      inputSchema: Schemas.OpenNoteSchema.shape,
+    },
+    wrapHandler("obsidian_open_note", (args) => vaultService.openNote(args.path, args.newTab, args.vault))
+  );
+
+  // 18. Plugins & Customization Domain
+  server.registerTool(
+    "obsidian_list_plugins",
+    {
+      description: "Lists installed community plugins and active core plugins",
+      inputSchema: Schemas.ListPluginsSchema.shape,
+    },
+    wrapHandler("obsidian_list_plugins", (args) => vaultService.listPlugins(args.vault))
+  );
+  server.registerTool(
+    "obsidian_list_snippets",
+    {
+      description: "Lists installed and enabled CSS snippets",
+      inputSchema: Schemas.ListSnippetsSchema.shape,
+    },
+    wrapHandler("obsidian_list_snippets", (args) => vaultService.listSnippets(args.vault))
+  );
+
+  // 19. Commands Domain
+  server.registerTool(
+    "obsidian_list_commands",
+    {
+      description: "Lists available Obsidian command palette command IDs",
+      inputSchema: Schemas.ListCommandsSchema.shape,
+    },
+    wrapHandler("obsidian_list_commands", (args) => vaultService.listCommands(args.filter, args.vault))
+  );
+  server.registerTool(
+    "obsidian_execute_command",
+    {
+      description: "Executes an Obsidian command by its command ID via CLI",
+      inputSchema: Schemas.ExecuteCommandSchema.shape,
+    },
+    wrapHandler("obsidian_execute_command", (args) => vaultService.executeCommand(args.id, args.vault))
+  );
+
+  // 20. Escape Hatch (Gated behind ENABLE_ADVANCED_CLI and vault:developer scope)
   if (config?.ENABLE_ADVANCED_CLI === true) {
     server.registerTool(
       "obsidian_cli",

@@ -234,9 +234,90 @@ export const RecentChangesSchema = z.object({
   vault: VaultNameSchema,
 });
 
+// Bookmarks schemas
+export const ListBookmarksSchema = z.object({
+  vault: VaultNameSchema,
+});
+export const CreateBookmarkSchema = z.object({
+  path: VaultRelativePathSchema.describe("File or folder path to bookmark"),
+  subpath: z.string().optional().describe("Heading or block ID subpath (e.g. '#Summary' or '^quote')"),
+  title: z.string().optional().describe("Custom title for the bookmark"),
+  vault: VaultNameSchema,
+});
+
+// Outline schemas
+export const GetOutlineSchema = z.object({
+  path: VaultRelativePathSchema,
+  vault: VaultNameSchema,
+});
+
+// Aliases schemas
+export const ListAliasesSchema = z.object({
+  path: VaultRelativePathSchema.optional().describe("If provided, lists aliases for specific note; otherwise scans all notes in vault"),
+  vault: VaultNameSchema,
+});
+
+// Templates schemas
+export const ListTemplatesSchema = z.object({
+  folder: VaultRelativePathSchema.optional().describe("Optional templates folder path"),
+  vault: VaultNameSchema,
+});
+export const ReadTemplateSchema = z.object({
+  name: z.string().min(1).describe("Template name or path"),
+  title: z.string().optional().describe("Note title to resolve {{title}} variable"),
+  resolve: z.boolean().default(true).describe("Whether to resolve date, time, and title variables"),
+  vault: VaultNameSchema,
+});
+
+// Word Count schemas
+export const WordCountSchema = z.object({
+  path: VaultRelativePathSchema,
+  vault: VaultNameSchema,
+});
+
+// Random Note schemas
+export const RandomNoteSchema = z.object({
+  folder: VaultRelativePathSchema.optional().describe("Optional folder to pick random note from"),
+  vault: VaultNameSchema,
+});
+
+// Unique Note schemas
+export const CreateUniqueNoteSchema = z.object({
+  title: z.string().default("").describe("Optional title suffix after the timestamp ID"),
+  content: z.string().default("").describe("Initial note body"),
+  folder: VaultRelativePathSchema.optional().describe("Folder to place unique note into"),
+  vault: VaultNameSchema,
+});
+
+// Open Note schemas
+export const OpenNoteSchema = z.object({
+  path: VaultRelativePathSchema,
+  newTab: z.boolean().default(false),
+  vault: VaultNameSchema,
+});
+
+// Plugins & Snippets schemas
+export const ListPluginsSchema = z.object({
+  vault: VaultNameSchema,
+});
+export const ListSnippetsSchema = z.object({
+  vault: VaultNameSchema,
+});
+
+// Commands schemas
+export const ListCommandsSchema = z.object({
+  filter: z.string().optional().describe("Filter command IDs by prefix (e.g. 'editor:' or 'app:')"),
+  vault: VaultNameSchema,
+});
+export const ExecuteCommandSchema = z.object({
+  id: z.string().min(1).describe("Command ID to execute (e.g. 'app:open-settings')"),
+  vault: VaultNameSchema,
+});
+
 // Advanced CLI escape hatch
 export const ObsidianCliSchema = z.object({
   command: z.string().min(1),
   args: z.record(z.string()).default({}),
   vault: VaultNameSchema,
 });
+

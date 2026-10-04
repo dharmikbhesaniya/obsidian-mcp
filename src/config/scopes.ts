@@ -76,9 +76,11 @@ export const TOOL_SCOPES: Record<string, ScopeType> = {
 
   // Outline domain
   obsidian_get_outline: Scope.VAULT_READ,
+  obsidian_outline: Scope.VAULT_READ,
 
   // Aliases domain
   obsidian_list_aliases: Scope.VAULT_READ,
+  obsidian_get_aliases: Scope.VAULT_READ,
 
   // Templates domain
   obsidian_list_templates: Scope.VAULT_READ,
@@ -95,6 +97,7 @@ export const TOOL_SCOPES: Record<string, ScopeType> = {
 
   // Desktop Integration domain
   obsidian_open_note: Scope.VAULT_READ,
+  obsidian_open_in_app: Scope.VAULT_READ,
 
   // Plugins & Snippets domain
   obsidian_list_plugins: Scope.VAULT_READ,

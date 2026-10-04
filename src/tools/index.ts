@@ -473,6 +473,14 @@ export function registerTools(
     },
     wrapHandler("obsidian_get_outline", (args) => vaultService.getOutline(args.path, args.vault))
   );
+  server.registerTool(
+    "obsidian_outline",
+    {
+      description: "Returns the structured heading outline with line numbers for a note (alias for obsidian_get_outline)",
+      inputSchema: Schemas.GetOutlineSchema.shape,
+    },
+    wrapHandler("obsidian_outline", (args) => vaultService.getOutline(args.path, args.vault))
+  );
 
   // 12. Aliases Domain
   server.registerTool(
@@ -482,6 +490,14 @@ export function registerTools(
       inputSchema: Schemas.ListAliasesSchema.shape,
     },
     wrapHandler("obsidian_list_aliases", (args) => vaultService.listAliases(args.path, args.vault))
+  );
+  server.registerTool(
+    "obsidian_get_aliases",
+    {
+      description: "Lists all frontmatter aliases across the vault or for a specific note (alias for obsidian_list_aliases)",
+      inputSchema: Schemas.ListAliasesSchema.shape,
+    },
+    wrapHandler("obsidian_get_aliases", (args) => vaultService.listAliases(args.path, args.vault))
   );
 
   // 13. Templates Domain
@@ -544,6 +560,14 @@ export function registerTools(
       inputSchema: Schemas.OpenNoteSchema.shape,
     },
     wrapHandler("obsidian_open_note", (args) => vaultService.openNote(args.path, args.newTab, args.vault))
+  );
+  server.registerTool(
+    "obsidian_open_in_app",
+    {
+      description: "Opens a note in the Obsidian desktop application interface (alias for obsidian_open_note)",
+      inputSchema: Schemas.OpenNoteSchema.shape,
+    },
+    wrapHandler("obsidian_open_in_app", (args) => vaultService.openNote(args.path, args.newTab, args.vault))
   );
 
   // 18. Plugins & Customization Domain

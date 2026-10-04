@@ -1,11 +1,11 @@
 {
-  "name": "@dharmikbhesaniya/obsidian-mcp",
+  "name": "obsidian-remote-mcp",
   "version": "0.1.0",
   "description": "Secure, typed Model Context Protocol (MCP) server for remote Obsidian knowledge systems",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "obsidian-mcp": "./dist/index.js"
+    "obsidian-remote-mcp": "./dist/index.js"
   },
   "type": "module",
   "files": [

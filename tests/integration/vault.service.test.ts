@@ -117,9 +117,9 @@ describe("VaultService Integration", () => {
     await service.createNote("todo.md", "- [ ] Task 1\n- [x] Task 2\n- [ ] Task 3");
 
     const res = await service.listTasks("todo.md", "todo");
-    expect(res.tasks.length).toBe(2);
-    expect(res.tasks[0].text).toBe("Task 1");
-    expect(res.tasks[1].text).toBe("Task 3");
+    expect(res.tasks?.length).toBe(2);
+    expect(res.tasks?.[0].text).toBe("Task 1");
+    expect(res.tasks?.[1].text).toBe("Task 3");
   });
 
   it("should set, read, and remove structured frontmatter properties", async () => {
@@ -184,7 +184,7 @@ Refer to [[03-Knowledge/Auth]] for credentials.
 
     const ctx = await service.getNoteContext("03-Knowledge/Auth.md");
     expect(ctx.path).toBe("03-Knowledge/Auth.md");
-    expect(ctx.frontmatter.title).toBe("Auth Architecture");
+    expect(ctx.frontmatter?.title).toBe("Auth Architecture");
     expect(ctx.headings).toEqual([{ level: 1, text: "Authentication System" }]);
     expect(ctx.outgoingLinks).toEqual(["03-Knowledge/Sessions"]);
     expect(ctx.backlinks).toContain("03-Knowledge/Sessions.md");
@@ -240,7 +240,7 @@ Refer to [[03-Knowledge/Auth]] for credentials.
   it("should enforce expectedRevision on appendDailyNote and prependDailyNote", async () => {
     // 1. Initial appendDailyNote (creates if not existing)
     const daily1 = await service.appendDailyNote("- [ ] Morning task");
-    expect(daily1.created || daily1.appended).toBe(true);
+    expect(daily1.appended).toBe(true);
     const rev1 = daily1.newRevision;
 
     // Stale revision on appendDailyNote must throw CONFLICT
@@ -314,8 +314,8 @@ See [[04-Budget/Rel1]] and [[04-Budget/Rel2]].
     expect(selectiveCtx.body).toBeUndefined();
     expect(selectiveCtx.backlinks).toBeUndefined();
     expect(selectiveCtx.headings).toBeUndefined();
-    expect(selectiveCtx.frontmatter.title).toBe("Main Note");
-    expect(selectiveCtx.relatedNotes.length).toBeLessThanOrEqual(1);
+    expect(selectiveCtx.frontmatter?.title).toBe("Main Note");
+    expect(selectiveCtx.relatedNotes?.length).toBeLessThanOrEqual(1);
   });
 
   it("should surgically patch note headings (replace, append, prepend)", async () => {

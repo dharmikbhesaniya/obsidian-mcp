@@ -18,6 +18,8 @@ describe("Security & Auth Manager", () => {
     OBSIDIAN_BIN_PATH: "obsidian",
     AUTH_ENABLED: true,
     BEARER_TOKEN_HASH: tokenHash,
+    READ_ONLY: false,
+    AUDIT_LOG_ENABLED: true,
     RATE_LIMIT_PER_MINUTE: 60,
     MAX_SEARCH_RESULTS: 50,
     COMMAND_TIMEOUT_MS: 15000,

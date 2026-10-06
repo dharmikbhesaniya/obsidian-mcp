@@ -103,6 +103,7 @@ describe("HTTP Transport Integration", () => {
       OBSIDIAN_VAULT_PATH: tempVaultDir,
       OBSIDIAN_BIN_PATH: "mock-obsidian",
       AUTH_ENABLED: false,
+      READ_ONLY: false,
       AUDIT_LOG_ENABLED: false,
       RATE_LIMIT_PER_MINUTE: 1000,
       MAX_SEARCH_RESULTS: 50,

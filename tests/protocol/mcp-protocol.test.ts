@@ -12,15 +12,21 @@ describe("MCP Protocol & Capability Registration", () => {
   beforeEach(() => {
     tempVaultDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-protocol-test-"));
     testConfig = {
+      NODE_ENV: "test",
+      MCP_TRANSPORT: "stdio",
       OBSIDIAN_VAULT_PATH: tempVaultDir,
       OBSIDIAN_BIN_PATH: "mock-obsidian",
       AUTH_ENABLED: false,
+      READ_ONLY: false,
+      AUDIT_LOG_ENABLED: false,
       RATE_LIMIT_PER_MINUTE: 100,
+      MAX_SEARCH_RESULTS: 50,
+      COMMAND_TIMEOUT_MS: 5000,
+      ENABLE_ADVANCED_CLI: false,
+      ENABLE_DESTRUCTIVE_TOOLS: true,
       PORT: 3000,
       HOST: "127.0.0.1",
       LOG_LEVEL: "info",
-      COMMAND_TIMEOUT_MS: 5000,
-      AUDIT_LOG_ENABLED: false,
     };
   });
 

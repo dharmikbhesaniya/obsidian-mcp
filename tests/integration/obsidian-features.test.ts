@@ -121,9 +121,10 @@ Body.
       // Vault-wide alias resolution map
       const vaultAliases = await service.listAliases();
       expect(vaultAliases.totalAliases).toBe(3);
-      expect(vaultAliases.aliases["AI"]).toBe("ArtificialIntelligence.md");
-      expect(vaultAliases.aliases["Machine Learning"]).toBe("ArtificialIntelligence.md");
-      expect(vaultAliases.aliases["PKM"]).toBe("PersonalKnowledgeManagement.md");
+      const aliasMap = vaultAliases.aliases as Record<string, string>;
+      expect(aliasMap["AI"]).toBe("ArtificialIntelligence.md");
+      expect(aliasMap["Machine Learning"]).toBe("ArtificialIntelligence.md");
+      expect(aliasMap["PKM"]).toBe("PersonalKnowledgeManagement.md");
     });
   });
 

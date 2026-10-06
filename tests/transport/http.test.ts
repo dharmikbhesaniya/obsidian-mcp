@@ -78,8 +78,8 @@ describe("HTTP Transport Integration", () => {
   let tempVaultDir: string;
   let cleanupIntervalId: NodeJS.Timeout;
 
-  const validTokenA = "token-secret-alpha";
-  const validTokenB = "token-secret-beta";
+  const validTokenA = crypto.randomBytes(16).toString("hex");
+  const validTokenB = crypto.randomBytes(16).toString("hex");
   const tokenAHash = crypto.createHash("sha256").update(validTokenA).digest("hex");
   const tokenBHash = crypto.createHash("sha256").update(validTokenB).digest("hex");
 

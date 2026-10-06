@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { describe, it, expect } from "vitest";
 import { AuthManager, getCurrentAuthContext } from "../../src/security/auth.js";
 import { Scope } from "../../src/config/scopes.js";
@@ -5,7 +6,7 @@ import { RateLimiter } from "../../src/security/rate-limit.js";
 import { ErrorCode, ObsidianMcpError } from "../../src/schemas/errors.js";
 
 describe("Security & Auth Manager", () => {
-  const secretToken = "my-secret-vps-bearer-token-12345";
+  const secretToken = crypto.randomBytes(24).toString("hex");
   const tokenHash = AuthManager.hashToken(secretToken);
 
   const mockConfig = {

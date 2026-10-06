@@ -20,6 +20,8 @@ import {
   isCliCommandAllowed,
   getCliCommandMetadata,
 } from "../config/commands.js";
+import { Scope, ScopeType, hasRequiredScope } from "../config/scopes.js";
+import { VaultDefinition } from "../config/config.js";
 
 export { ALLOWED_CLI_COMMANDS, isCliCommandAllowed, getCliCommandMetadata };
 
@@ -33,6 +35,8 @@ export interface VaultInstance {
   pathGuard: PathGuard;
   trashManager: TrashManager;
   isDefault: boolean;
+  readOnly: boolean;
+  scopes?: ScopeType[];
 }
 
 export class VaultService {
@@ -41,10 +45,11 @@ export class VaultService {
   private readonly cliAdapter: ObsidianCliAdapter;
 
   constructor(
-    vaultsOrPathGuard: PathGuard | Record<string, string> | Map<string, string>,
+    vaultsOrPathGuard: PathGuard | Record<string, any> | Map<string, any>,
     cliAdapter: ObsidianCliAdapter,
     trashManager?: TrashManager,
-    defaultVault?: string
+    defaultVault?: string,
+    vaultDefinitions?: Record<string, VaultDefinition>
   ) {
     this.cliAdapter = cliAdapter;
 
@@ -52,6 +57,8 @@ export class VaultService {
       const root = vaultsOrPathGuard.getVaultRoot();
       const name = defaultVault || path.basename(root) || "default";
       const tm = trashManager ?? new TrashManager(root);
+      const def = vaultDefinitions?.[name];
+      const isReadOnly = def?.readOnly ?? false;
       this.defaultVaultName = name;
       const instance: VaultInstance = {
         name,
@@ -59,6 +66,8 @@ export class VaultService {
         pathGuard: vaultsOrPathGuard,
         trashManager: tm,
         isDefault: true,
+        readOnly: isReadOnly,
+        scopes: def?.scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined),
       };
       this.vaults.set(name, instance);
       if (name !== "default") {
@@ -76,7 +85,24 @@ export class VaultService {
 
       this.defaultVaultName = defaultVault || entries[0][0];
 
-      for (const [name, vaultPath] of entries) {
+      for (const [name, vaultPathOrDef] of entries) {
+        let vaultPath: string;
+        let isReadOnly = false;
+        let scopes: ScopeType[] | undefined;
+
+        if (typeof vaultPathOrDef === "object" && vaultPathOrDef !== null && "path" in vaultPathOrDef) {
+          vaultPath = String(vaultPathOrDef.path);
+          isReadOnly = Boolean(vaultPathOrDef.readOnly);
+          scopes = vaultPathOrDef.scopes;
+        } else {
+          vaultPath = String(vaultPathOrDef);
+          const def = vaultDefinitions?.[name];
+          if (def) {
+            isReadOnly = Boolean(def.readOnly);
+            scopes = def.scopes;
+          }
+        }
+
         const resolvedPath = path.resolve(vaultPath);
         const pg = new PathGuard(resolvedPath);
         const tm = new TrashManager(resolvedPath);
@@ -87,6 +113,8 @@ export class VaultService {
           pathGuard: pg,
           trashManager: tm,
           isDefault: isDef,
+          readOnly: isReadOnly,
+          scopes: scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined),
         });
       }
 
@@ -139,10 +167,37 @@ export class VaultService {
     return `obsidian://open?vault=${encodeURIComponent(vault.name)}&file=${encodeURIComponent(relativePath)}`;
   }
 
+  public enforceVaultScope(vaultName: string | undefined, requiredScope: ScopeType, toolName: string): void {
+    const vault = this.resolveVault(vaultName);
+    if (vault.readOnly && requiredScope !== Scope.VAULT_READ) {
+      throw new ObsidianMcpError(
+        ErrorCode.FORBIDDEN,
+        `Vault '${vault.name}' is configured as read-only. Tool '${toolName}' requires scope '${requiredScope}', which is not permitted on this vault.`,
+        403,
+        { vault: vault.name, requiredScope, tool: toolName }
+      );
+    }
+    if (vault.scopes && vault.scopes.length > 0 && !hasRequiredScope(vault.scopes, requiredScope)) {
+      throw new ObsidianMcpError(
+        ErrorCode.FORBIDDEN,
+        `Vault '${vault.name}' does not permit scope '${requiredScope}' for tool '${toolName}'.`,
+        403,
+        { vault: vault.name, requiredScope, tool: toolName }
+      );
+    }
+  }
+
   // --- VAULT DOMAIN ---
 
   public async listVaults() {
-    const list: Array<{ name: string; path: string; isDefault: boolean; totalFiles: number }> = [];
+    const list: Array<{
+      name: string;
+      path: string;
+      isDefault: boolean;
+      totalFiles: number;
+      readOnly: boolean;
+      scopes?: ScopeType[];
+    }> = [];
     const seenNames = new Set<string>();
     const seenRoots = new Set<string>();
 
@@ -177,6 +232,8 @@ export class VaultService {
         path: instance.root,
         isDefault: instance.name === this.defaultVaultName,
         totalFiles,
+        readOnly: instance.readOnly,
+        scopes: instance.scopes,
       });
     }
 
@@ -218,6 +275,8 @@ export class VaultService {
       status: cliReachable ? "connected" : "degraded",
       vaultAccessible: true,
       obsidianCli: cliReachable ? "connected" : "unavailable",
+      readOnly: vault.readOnly,
+      scopes: vault.scopes,
       totalFiles,
     };
   }

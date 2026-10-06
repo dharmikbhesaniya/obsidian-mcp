@@ -18,10 +18,18 @@ export function createMcpServer(config: AppConfig, getAuthContext?: () => AuthCo
   const parsed = parseVaultsConfig(
     config.OBSIDIAN_VAULT_PATH,
     config.OBSIDIAN_VAULTS,
-    config.OBSIDIAN_DEFAULT_VAULT
+    config.OBSIDIAN_DEFAULT_VAULT,
+    config.OBSIDIAN_READ_ONLY_VAULTS,
+    config.OBSIDIAN_VAULT_SCOPES
   );
   const cliAdapter = new ObsidianCliAdapter(config.OBSIDIAN_BIN_PATH, config.COMMAND_TIMEOUT_MS);
-  const vaultService = new VaultService(parsed.vaults, cliAdapter, undefined, parsed.defaultVault);
+  const vaultService = new VaultService(
+    parsed.vaults,
+    cliAdapter,
+    undefined,
+    parsed.defaultVault,
+    parsed.vaultDefinitions
+  );
   const authManager = new AuthManager(config);
   const rateLimiter = new RateLimiter(config.RATE_LIMIT_PER_MINUTE);
   const auditLogger = new AuditLogger(config.AUDIT_LOG_ENABLED);

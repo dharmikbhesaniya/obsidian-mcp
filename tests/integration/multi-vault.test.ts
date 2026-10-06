@@ -5,7 +5,8 @@ import os from "node:os";
 import { VaultService } from "../../src/services/vault.service.js";
 import { ObsidianCliAdapter } from "../../src/adapters/obsidian/cli.adapter.js";
 import { parseVaultsConfig } from "../../src/config/config.js";
-import { ObsidianMcpError } from "../../src/schemas/errors.js";
+import { ObsidianMcpError, ErrorCode } from "../../src/schemas/errors.js";
+import { Scope } from "../../src/config/scopes.js";
 import { createMcpServer } from "../../src/server.js";
 
 describe("Multi-Vault Architecture & Isolation", () => {
@@ -63,6 +64,40 @@ describe("Multi-Vault Architecture & Isolation", () => {
         work: "/path/to/work",
       });
       expect(parsed.defaultVault).toBe("personal");
+    });
+
+    it("should parse :ro and :rw suffixes in comma-separated pairs", () => {
+      const input = "personal=/path/to/personal:ro,work=/path/to/work:rw";
+      const parsed = parseVaultsConfig(undefined, input);
+      expect(parsed.vaults).toEqual({
+        personal: "/path/to/personal",
+        work: "/path/to/work",
+      });
+      expect(parsed.vaultDefinitions.personal.readOnly).toBe(true);
+      expect(parsed.vaultDefinitions.personal.scopes).toEqual([Scope.VAULT_READ]);
+      expect(parsed.vaultDefinitions.work.readOnly).toBe(false);
+    });
+
+    it("should parse OBSIDIAN_READ_ONLY_VAULTS parameter", () => {
+      const input = "personal=/path/to/personal,work=/path/to/work";
+      const parsed = parseVaultsConfig(undefined, input, "work", "personal");
+      expect(parsed.vaultDefinitions.personal.readOnly).toBe(true);
+      expect(parsed.vaultDefinitions.work.readOnly).toBe(false);
+    });
+
+    it("should parse JSON dictionary format with readOnly and scopes", () => {
+      const input = JSON.stringify({
+        personal: { path: "/path/to/personal", readOnly: true },
+        work: { path: "/path/to/work", scopes: ["vault:read", "vault:write"] },
+      });
+      const parsed = parseVaultsConfig(undefined, input);
+      expect(parsed.vaults).toEqual({
+        personal: "/path/to/personal",
+        work: "/path/to/work",
+      });
+      expect(parsed.vaultDefinitions.personal.readOnly).toBe(true);
+      expect(parsed.vaultDefinitions.work.readOnly).toBe(false);
+      expect(parsed.vaultDefinitions.work.scopes).toEqual(["vault:read", "vault:write"]);
     });
 
     it("should parse object input directly", () => {
@@ -230,6 +265,66 @@ describe("Multi-Vault Architecture & Isolation", () => {
       const workTrash = path.join(workVaultDir, ".obsidian-mcp", "trash");
       expect(fs.existsSync(workTrash)).toBe(false);
     });
+
+    it("should enforce per-vault read-only access while allowing read-write on other vaults", async () => {
+      const service = new VaultService(
+        {
+          personal: { path: personalVaultDir, readOnly: true },
+          work: { path: workVaultDir, readOnly: false },
+        },
+        cliAdapter,
+        undefined,
+        "work"
+      );
+
+      // 1. Reading from read-only vault succeeds
+      const readRes = await service.readNote("Journal.md", false, "personal");
+      expect(readRes.content).toContain("Personal Journal");
+
+      // 2. enforceVaultScope allows read on personal, blocks write/delete
+      expect(() =>
+        service.enforceVaultScope("personal", Scope.VAULT_READ, "obsidian_read_note")
+      ).not.toThrow();
+
+      expect(() =>
+        service.enforceVaultScope("personal", Scope.VAULT_WRITE, "obsidian_create_note")
+      ).toThrow(ObsidianMcpError);
+
+      try {
+        service.enforceVaultScope("personal", Scope.VAULT_WRITE, "obsidian_create_note");
+      } catch (err: any) {
+        expect(err.code).toBe(ErrorCode.FORBIDDEN);
+        expect(err.message).toContain("read-only");
+      }
+
+      // 3. enforceVaultScope allows write on work vault
+      expect(() =>
+        service.enforceVaultScope("work", Scope.VAULT_WRITE, "obsidian_create_note")
+      ).not.toThrow();
+
+      // 4. Writing note in work vault succeeds
+      const created = await service.createNote(
+        "Sprint.md",
+        "# Work Sprint\nTasks for week.",
+        undefined,
+        false,
+        undefined,
+        "work"
+      );
+      expect(created.path).toBe("Sprint.md");
+      expect(fs.existsSync(path.join(workVaultDir, "Sprint.md"))).toBe(true);
+
+      // 5. Vault metadata reflects per-vault readOnly status
+      const listRes = await service.listVaults();
+      const personalMeta = listRes.vaults.find((v) => v.name === "personal");
+      const workMeta = listRes.vaults.find((v) => v.name === "work");
+      expect(personalMeta?.readOnly).toBe(true);
+      expect(personalMeta?.scopes).toEqual([Scope.VAULT_READ]);
+      expect(workMeta?.readOnly).toBe(false);
+
+      const vaultInfo = await service.getVault("personal");
+      expect(vaultInfo.readOnly).toBe(true);
+    });
   });
 
   describe("Server Multi-Vault Registration & Protocol", () => {
@@ -257,6 +352,34 @@ describe("Multi-Vault Architecture & Isolation", () => {
 
       expect(server).toBeDefined();
       expect(vaultService).toBeDefined();
+    });
+
+    it("should reject tool mutation on read-only vault configured via :ro string", () => {
+      const { vaultService } = createMcpServer({
+        NODE_ENV: "test",
+        MCP_TRANSPORT: "stdio",
+        PORT: 3000,
+        HOST: "127.0.0.1",
+        OBSIDIAN_VAULTS: `personal=${personalVaultDir}:ro,work=${workVaultDir}:rw`,
+        OBSIDIAN_DEFAULT_VAULT: "work",
+        OBSIDIAN_BIN_PATH: "obsidian",
+        AUTH_ENABLED: false,
+        AUDIT_LOG_ENABLED: false,
+        RATE_LIMIT_PER_MINUTE: 1000,
+        MAX_SEARCH_RESULTS: 50,
+        COMMAND_TIMEOUT_MS: 5000,
+        ENABLE_ADVANCED_CLI: false,
+        ENABLE_DESTRUCTIVE_TOOLS: true,
+        LOG_LEVEL: "info",
+      });
+
+      expect(() =>
+        vaultService.enforceVaultScope("personal", Scope.VAULT_WRITE, "obsidian_create_note")
+      ).toThrowError(/read-only/);
+
+      expect(() =>
+        vaultService.enforceVaultScope("work", Scope.VAULT_WRITE, "obsidian_create_note")
+      ).not.toThrow();
     });
   });
 });

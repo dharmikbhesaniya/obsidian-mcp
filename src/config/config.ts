@@ -2,26 +2,139 @@ import dotenv from "dotenv";
 import path from "node:path";
 import crypto from "node:crypto";
 import { z } from "zod";
+import { Scope, ScopeType, parseScopes } from "./scopes.js";
 
 dotenv.config();
 
+export interface VaultDefinition {
+  name: string;
+  path: string;
+  readOnly: boolean;
+  scopes?: ScopeType[];
+}
+
 export function parseVaultsConfig(
   vaultPath?: string,
-  vaultsInput?: string | Record<string, string>,
-  defaultVaultInput?: string
-): { vaults: Record<string, string>; defaultVault: string } {
+  vaultsInput?: string | Record<string, any>,
+  defaultVaultInput?: string,
+  readOnlyVaultsInput?: string,
+  vaultScopesInput?: string | Record<string, any>
+): {
+  vaults: Record<string, string>;
+  vaultDefinitions: Record<string, VaultDefinition>;
+  defaultVault: string;
+} {
   const vaults: Record<string, string> = {};
+  const vaultDefinitions: Record<string, VaultDefinition> = {};
+
+  const readOnlySet = new Set<string>();
+  if (readOnlyVaultsInput) {
+    for (const item of readOnlyVaultsInput.split(",")) {
+      const trimmed = item.trim();
+      if (trimmed) readOnlySet.add(trimmed);
+    }
+  }
+
+  const explicitScopesMap = new Map<string, ScopeType[]>();
+  if (vaultScopesInput) {
+    if (typeof vaultScopesInput === "object") {
+      for (const [k, v] of Object.entries(vaultScopesInput)) {
+        explicitScopesMap.set(k.trim(), Array.isArray(v) ? (v as ScopeType[]) : parseScopes(String(v)));
+      }
+    } else if (typeof vaultScopesInput === "string") {
+      const parts = vaultScopesInput.split(";");
+      for (const part of parts) {
+        const eqIdx = part.indexOf("=");
+        if (eqIdx > 0) {
+          const k = part.substring(0, eqIdx).trim();
+          const v = part.substring(eqIdx + 1).trim();
+          explicitScopesMap.set(k, parseScopes(v));
+        }
+      }
+    }
+  }
+
+  const parsePathAndMode = (name: string, rawVal: any): VaultDefinition => {
+    if (typeof rawVal === "object" && rawVal !== null) {
+      const vPath = String(rawVal.path || "").trim();
+      const ro = Boolean(
+        rawVal.readOnly === true ||
+          rawVal.readonly === true ||
+          rawVal.mode === "ro" ||
+          readOnlySet.has(name)
+      );
+      let sc: ScopeType[] | undefined;
+      if (explicitScopesMap.has(name)) {
+        sc = explicitScopesMap.get(name);
+      } else if (Array.isArray(rawVal.scopes)) {
+        sc = rawVal.scopes;
+      } else if (typeof rawVal.scopes === "string") {
+        sc = parseScopes(rawVal.scopes);
+      } else if (ro) {
+        sc = [Scope.VAULT_READ];
+      }
+      return {
+        name,
+        path: vPath,
+        readOnly: ro,
+        scopes: sc,
+      };
+    }
+
+    let str = String(rawVal).trim();
+    let isReadOnly = readOnlySet.has(name);
+    let customScopes: ScopeType[] | undefined = explicitScopesMap.get(name);
+
+    if (!customScopes) {
+      const bracketMatch = str.match(/^(.*?)\s*\[(.*?)\]$/);
+      if (bracketMatch) {
+        str = bracketMatch[1].trim();
+        customScopes = parseScopes(bracketMatch[2]);
+        isReadOnly = !customScopes.includes(Scope.VAULT_WRITE) && !customScopes.includes(Scope.VAULT_ADMIN);
+      } else {
+        const roRegex = /(?::|\s*\()(ro|read-only|read_only)\)?$/i;
+        const rwRegex = /(?::|\s*\()(rw|read-write|read_write|write)\)?$/i;
+        if (roRegex.test(str)) {
+          str = str.replace(roRegex, "").trim();
+          isReadOnly = true;
+          customScopes = [Scope.VAULT_READ];
+        } else if (rwRegex.test(str)) {
+          str = str.replace(rwRegex, "").trim();
+          isReadOnly = false;
+        }
+      }
+    }
+
+    if (isReadOnly && (!customScopes || customScopes.length === 0)) {
+      customScopes = [Scope.VAULT_READ];
+    }
+
+    return {
+      name,
+      path: str,
+      readOnly: isReadOnly,
+      scopes: customScopes,
+    };
+  };
 
   if (vaultsInput) {
     if (typeof vaultsInput === "object" && !Array.isArray(vaultsInput)) {
-      Object.assign(vaults, vaultsInput);
+      for (const [k, v] of Object.entries(vaultsInput)) {
+        const def = parsePathAndMode(k, v);
+        vaults[k] = def.path;
+        vaultDefinitions[k] = def;
+      }
     } else if (typeof vaultsInput === "string") {
       const trimmed = vaultsInput.trim();
       if (trimmed.startsWith("{")) {
         try {
           const parsed = JSON.parse(trimmed);
           if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-            Object.assign(vaults, parsed);
+            for (const [k, v] of Object.entries(parsed)) {
+              const def = parsePathAndMode(k, v);
+              vaults[k] = def.path;
+              vaultDefinitions[k] = def;
+            }
           }
         } catch {
           // not JSON, fallback to comma separated
@@ -36,7 +149,9 @@ export function parseVaultsConfig(
             const k = part.substring(0, eqIdx).trim();
             const v = part.substring(eqIdx + 1).trim();
             if (k && v) {
-              vaults[k] = v;
+              const def = parsePathAndMode(k, v);
+              vaults[k] = def.path;
+              vaultDefinitions[k] = def;
             }
           }
         }
@@ -47,10 +162,13 @@ export function parseVaultsConfig(
   if (vaultPath && vaultPath.trim()) {
     const singleVaultPath = vaultPath.trim();
     const vaultBase = path.basename(singleVaultPath) || "default";
+    const def = parsePathAndMode(vaultBase, singleVaultPath);
     if (Object.keys(vaults).length === 0) {
-      vaults[vaultBase] = singleVaultPath;
+      vaults[vaultBase] = def.path;
+      vaultDefinitions[vaultBase] = def;
     } else if (!vaults[vaultBase] && !vaults["default"]) {
-      vaults["default"] = singleVaultPath;
+      vaults["default"] = def.path;
+      vaultDefinitions["default"] = { ...def, name: "default" };
     }
   }
 
@@ -64,7 +182,7 @@ export function parseVaultsConfig(
     defaultVault = vaults["default"] ? "default" : vaultNames[0];
   }
 
-  return { vaults, defaultVault };
+  return { vaults, vaultDefinitions, defaultVault };
 }
 
 const ConfigSchema = z.object({
@@ -76,8 +194,10 @@ const ConfigSchema = z.object({
 
   // Vault configuration
   OBSIDIAN_VAULT_PATH: z.string().optional(),
-  OBSIDIAN_VAULTS: z.union([z.record(z.string()), z.string()]).optional(),
+  OBSIDIAN_VAULTS: z.union([z.record(z.any()), z.string()]).optional(),
   OBSIDIAN_DEFAULT_VAULT: z.string().optional(),
+  OBSIDIAN_READ_ONLY_VAULTS: z.string().optional(),
+  OBSIDIAN_VAULT_SCOPES: z.union([z.record(z.any()), z.string()]).optional(),
   OBSIDIAN_BIN_PATH: z.string().default("obsidian"),
 
   // Security

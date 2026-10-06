@@ -163,8 +163,10 @@ The Obsidian MCP Server is configured entirely via environment variables (in you
 | Variable | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `OBSIDIAN_VAULT_PATH` | string | *None* | Absolute path to a single target vault (e.g. `/Users/name/Vault`). Required unless `OBSIDIAN_VAULTS` is provided. |
-| `OBSIDIAN_VAULTS` | string / JSON | *None* | Multi-vault inventory. Accepts comma-separated `name=path,name2=path2` pairs or JSON string `{"v1":"/path1","v2":"/path2"}`. |
+| `OBSIDIAN_VAULTS` | string / JSON | *None* | Multi-vault inventory. Accepts comma-separated `name=path:ro,name2=path2:rw` pairs or JSON with per-vault options. |
 | `OBSIDIAN_DEFAULT_VAULT` | string | *First vault* | Name of the primary vault used when tool calls omit an explicit `vault` argument. |
+| `OBSIDIAN_READ_ONLY_VAULTS` | string | *None* | Comma-separated list of vault names to lock as read-only (e.g. `personal,archive`). |
+| `OBSIDIAN_VAULT_SCOPES` | string / JSON | *None* | Per-vault scopes (e.g. `personal=vault:read;work=vault:read,vault:write`). |
 | `OBSIDIAN_BIN_PATH` | string | `obsidian` | System path to the official Obsidian desktop binary (e.g. `/usr/bin/obsidian` or `/Applications/Obsidian.app/Contents/MacOS/Obsidian`). |
 | `AUTH_ENABLED` | boolean | `false` | Enables cryptographic credential checks. Required (`true`) for production HTTP transport. |
 | `AUTH_TOKEN` | string | *None* | Plain-text secret passkey. The server computes a SHA-256 hash internally for verification. |
@@ -287,9 +289,10 @@ Use this setup if you want an AI assistant to query and reference your vault wit
 }
 ```
 
-#### Scenario 3: Multi-Vault on a Single MCP Server (Unified Routing)
-Use this setup if you have multiple vaults (e.g. work and personal) and want a single AI assistant to route commands between them using the `vault` parameter.
+#### Scenario 3: Multi-Vault with Per-Vault Permissions (e.g. Personal Read-Only, Work Read-Write)
+Use this setup if you want a single AI assistant connected to multiple vaults, but want **one vault to be strictly read-only** (e.g. personal notes) while allowing **full read-and-write on another** (e.g. work projects).
 
+##### Syntax A: Using `:ro` and `:rw` Suffixes (Recommended)
 ```json
 {
   "mcpServers": {
@@ -299,18 +302,40 @@ Use this setup if you have multiple vaults (e.g. work and personal) and want a s
         "/absolute/path/to/obsidian-mcp/dist/index.js"
       ],
       "env": {
-        "OBSIDIAN_VAULTS": "work=/Users/yourusername/Documents/WorkVault,personal=/Users/yourusername/Documents/PersonalVault",
-        "OBSIDIAN_DEFAULT_VAULT": "work",
-        "READ_ONLY": "false"
+        "OBSIDIAN_VAULTS": "personal=/Users/yourusername/Documents/PersonalVault:ro,work=/Users/yourusername/Documents/WorkVault:rw",
+        "OBSIDIAN_DEFAULT_VAULT": "work"
       }
     }
   }
 }
 ```
+
+##### Syntax B: Using `OBSIDIAN_READ_ONLY_VAULTS`
+```json
+{
+  "mcpServers": {
+    "obsidian": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/obsidian-mcp/dist/index.js"
+      ],
+      "env": {
+        "OBSIDIAN_VAULTS": "personal=/Users/yourusername/Documents/PersonalVault,work=/Users/yourusername/Documents/WorkVault",
+        "OBSIDIAN_READ_ONLY_VAULTS": "personal",
+        "OBSIDIAN_DEFAULT_VAULT": "work"
+      }
+    }
+  }
+}
+```
+
 *How it works*:
-- The AI discovers both vaults via `obsidian_list_vaults`.
-- Requests specifying `"vault": "personal"` operate on the personal vault.
-- Requests without a `vault` parameter automatically default to `work`.
+- The AI discovers both vaults via `obsidian_list_vaults`, which explicitly reports `readOnly: true` for `personal` and `readOnly: false` for `work`.
+- Reading and querying notes in `personal` succeeds normally.
+- If the AI attempts to create, edit, patch, or delete a note targeting `personal`, the server halts execution with a `403 Forbidden` error:  
+  `Vault 'personal' is configured as read-only. Tool 'obsidian_create_note' requires scope 'vault:write', which is not permitted on this vault.`
+- Modifying notes in `work` succeeds with full authoring capabilities.
+- Requests omitting the `vault` parameter automatically fall back to the default vault (`work`).
 
 #### Scenario 4: Multi-Vault with Separate Server Blocks (Independent Permissions)
 Use this setup when you want different security policies for each vault—such as allowing the AI to write to your work vault while keeping your personal vault strictly read-only.

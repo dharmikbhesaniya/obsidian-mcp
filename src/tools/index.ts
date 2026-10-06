@@ -29,6 +29,7 @@ export function registerTools(
         const requiredScope = TOOL_SCOPES[toolName];
         if (requiredScope) {
           authManager.enforceScope(auth, requiredScope, toolName);
+          vaultService.enforceVaultScope(args?.vault, requiredScope, toolName);
         }
 
         const result = await fn(args);

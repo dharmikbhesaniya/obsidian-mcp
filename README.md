@@ -17,10 +17,14 @@ This server is accompanied by the official companion repository: [Universal Obsi
 - [System Architecture](#system-architecture)
 - [Feature & Capability Summary](#feature--capability-summary)
 - [Companion Agent Skills & Plugins Suite](#companion-agent-skills--plugins-suite)
+- [Environment Variables & Configuration Reference](#environment-variables--configuration-reference)
+  - [Environment Variables Overview](#environment-variables-overview)
+  - [Architectural Importance of Variables](#architectural-importance-of-variables)
 - [Local Development Setup](#local-development-setup)
   - [Prerequisites](#prerequisites)
   - [Installation & Build](#installation--build)
   - [Running with Claude Desktop (stdio)](#running-with-claude-desktop-stdio)
+  - [Single Vault vs. Multi-Vault Configuration](#single-vault-vs-multi-vault-configuration)
   - [Running with Cursor IDE](#running-with-cursor-ide)
   - [Testing with MCP Inspector](#testing-with-mcp-inspector)
 - [Production VPS Setup (Hostinger / Ubuntu / Debian)](#production-vps-setup-hostinger--ubuntu--debian)
@@ -150,6 +154,50 @@ For complete instruction sets, prompts, and IDE rule definitions that empower AI
 
 ---
 
+## Environment Variables & Configuration Reference
+
+The Obsidian MCP Server is configured entirely via environment variables (in your `.env` file or within your AI client's MCP configuration).
+
+### Environment Variables Overview
+
+| Variable | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `OBSIDIAN_VAULT_PATH` | string | *None* | Absolute path to a single target vault (e.g. `/Users/name/Vault`). Required unless `OBSIDIAN_VAULTS` is provided. |
+| `OBSIDIAN_VAULTS` | string / JSON | *None* | Multi-vault inventory. Accepts comma-separated `name=path,name2=path2` pairs or JSON string `{"v1":"/path1","v2":"/path2"}`. |
+| `OBSIDIAN_DEFAULT_VAULT` | string | *First vault* | Name of the primary vault used when tool calls omit an explicit `vault` argument. |
+| `OBSIDIAN_BIN_PATH` | string | `obsidian` | System path to the official Obsidian desktop binary (e.g. `/usr/bin/obsidian` or `/Applications/Obsidian.app/Contents/MacOS/Obsidian`). |
+| `AUTH_ENABLED` | boolean | `false` | Enables cryptographic credential checks. Required (`true`) for production HTTP transport. |
+| `AUTH_TOKEN` | string | *None* | Plain-text secret passkey. The server computes a SHA-256 hash internally for verification. |
+| `BEARER_TOKEN_HASH` | string | *None* | Hexadecimal SHA-256 hash of your Bearer access token (for zero-trust setups where raw keys are never placed in configs). |
+| `READ_ONLY` | boolean | `false` | Safety toggle. When `true`, restricts all connections strictly to `vault:read` scope, blocking file creation, editing, or deletion. |
+| `SCOPES` | string | *All* | Comma-separated list of granted capabilities: `vault:read`, `vault:write`, `vault:delete`, `vault:admin`, `vault:developer`. |
+| `MCP_TRANSPORT` | enum | `stdio` | Transport mechanism: `stdio` (local subprocess) or `http` (Streamable HTTP `/mcp` and SSE `/sse`). |
+| `PORT` | number | `3000` | Network port when running over HTTP transport. |
+| `HOST` | string | `127.0.0.1` | Network interface binding. Set to `127.0.0.1` behind reverse proxies (Caddy/Nginx). |
+| `RATE_LIMIT_PER_MINUTE` | number | `120` | Maximum allowed tool invocations per minute per client session to prevent runaway AI loops. |
+| `COMMAND_TIMEOUT_MS` | number | `15000` | Timeout threshold (in milliseconds) before CLI subsystem commands are aborted. |
+| `MAX_SEARCH_RESULTS` | number | `50` | Maximum results returned by full-text and semantic search routines. |
+| `ENABLE_DESTRUCTIVE_TOOLS` | boolean | `true` | Allows deletion tools. When enabled, `obsidian_delete_note` recycles files to `.trash` safely. |
+| `ENABLE_ADVANCED_CLI` | boolean | `false` | Gated escape-hatch exposing raw `obsidian_cli` execution to clients with `vault:developer` scope. |
+| `AUDIT_LOG_ENABLED` | boolean | `true` | Emits structured JSON audit records to standard error (`stderr`) for every tool invocation. |
+
+---
+
+### Architectural Importance of Variables
+
+1. **Vault Sandboxing (`OBSIDIAN_VAULT_PATH` & `OBSIDIAN_VAULTS`)**  
+   The server implements a strict path-containment engine (`PathGuard`). By defining vault boundaries, the server prevents path traversal (`../`), symlink escapes, and null-byte injection attacks. AI agents are contained entirely within authorized vault folders.
+2. **Timing-Safe Credential Verification (`AUTH_ENABLED` & `AUTH_TOKEN` / `BEARER_TOKEN_HASH`)**  
+   When exposed over HTTP or shared environments, authentication ensures only authorized callers interact with private notes. Token comparisons use `crypto.timingSafeEqual` over SHA-256 digests, eliminating side-channel timing analysis. In production HTTP mode, disabling auth triggers a startup safety violation.
+3. **Immutable Guardrail (`READ_ONLY`)**  
+   For read-only assistants, research agents, or untrusted models, setting `READ_ONLY=true` immediately strips write, delete, and execution scopes. Even if an AI attempts to call `obsidian_create_note` or `obsidian_delete_note`, the request is denied with a `403 Forbidden` response.
+4. **Blast Radius Control (`SCOPES`)**  
+   Scopes provide least-privilege access. An agent tasked with drafting daily logs can be assigned `vault:read,vault:write` without granting `vault:delete` (preventing note loss) or `vault:developer` (preventing CLI access).
+5. **Session Safety & Loop Prevention (`RATE_LIMIT_PER_MINUTE`)**  
+   Autonomous AI agents occasionally enter repetitive retry loops. The sliding-window rate limiter prevents CPU exhaustion, excessive disk I/O, or Obsidian UI unresponsiveness.
+
+---
+
 ## Local Development Setup
 
 ### Prerequisites
@@ -180,12 +228,14 @@ AUTH_ENABLED=false
 
 Build and test:
 ```bash
-# Run test suite
+# Run test suite (unit, integration, and security checks)
 npm test
 
 # Build TypeScript to dist/
 npm run build
 ```
+
+---
 
 ### Running with Claude Desktop (stdio)
 
@@ -193,24 +243,106 @@ Add the server to your Claude Desktop configuration file:
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
+---
+
+### Single Vault vs. Multi-Vault Configuration
+
+#### Scenario 1: Single Vault (Full Read & Write Access)
+Use this setup when you have one primary vault and want your AI assistant to read notes, answer questions, draft content, and organize tags.
+
 ```json
 {
   "mcpServers": {
     "obsidian": {
       "command": "node",
       "args": [
-        "/absolute/path/to/obsidian-mcp/dist/index.js",
-        "--transport=stdio"
+        "/absolute/path/to/obsidian-mcp/dist/index.js"
       ],
       "env": {
-        "OBSIDIAN_VAULT_PATH": "/absolute/path/to/your/vault"
+        "OBSIDIAN_VAULT_PATH": "/Users/yourusername/Documents/MyVault",
+        "READ_ONLY": "false"
       }
     }
   }
 }
 ```
 
-Restart Claude Desktop. The hammer icon will show the 25 Obsidian tools available for use.
+#### Scenario 2: Single Vault (Safe Read-Only Mode)
+Use this setup if you want an AI assistant to query and reference your vault without the ability to create, edit, or delete any files.
+
+```json
+{
+  "mcpServers": {
+    "obsidian": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/obsidian-mcp/dist/index.js"
+      ],
+      "env": {
+        "OBSIDIAN_VAULT_PATH": "/Users/yourusername/Documents/MyVault",
+        "READ_ONLY": "true"
+      }
+    }
+  }
+}
+```
+
+#### Scenario 3: Multi-Vault on a Single MCP Server (Unified Routing)
+Use this setup if you have multiple vaults (e.g. work and personal) and want a single AI assistant to route commands between them using the `vault` parameter.
+
+```json
+{
+  "mcpServers": {
+    "obsidian": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/obsidian-mcp/dist/index.js"
+      ],
+      "env": {
+        "OBSIDIAN_VAULTS": "work=/Users/yourusername/Documents/WorkVault,personal=/Users/yourusername/Documents/PersonalVault",
+        "OBSIDIAN_DEFAULT_VAULT": "work",
+        "READ_ONLY": "false"
+      }
+    }
+  }
+}
+```
+*How it works*:
+- The AI discovers both vaults via `obsidian_list_vaults`.
+- Requests specifying `"vault": "personal"` operate on the personal vault.
+- Requests without a `vault` parameter automatically default to `work`.
+
+#### Scenario 4: Multi-Vault with Separate Server Blocks (Independent Permissions)
+Use this setup when you want different security policies for each vault—such as allowing the AI to write to your work vault while keeping your personal vault strictly read-only.
+
+```json
+{
+  "mcpServers": {
+    "obsidian_work": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/obsidian-mcp/dist/index.js"
+      ],
+      "env": {
+        "OBSIDIAN_VAULT_PATH": "/Users/yourusername/Documents/WorkVault",
+        "READ_ONLY": "false"
+      }
+    },
+    "obsidian_personal": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/obsidian-mcp/dist/index.js"
+      ],
+      "env": {
+        "OBSIDIAN_VAULT_PATH": "/Users/yourusername/Documents/PersonalVault",
+        "READ_ONLY": "true"
+      }
+    }
+  }
+}
+```
+
+---
 
 ### Running with Cursor IDE
 
@@ -221,9 +353,10 @@ Add the server to Cursor's MCP configuration in `~/.cursor/mcp.json` or project 
   "mcpServers": {
     "obsidian": {
       "command": "node",
-      "args": ["/absolute/path/to/obsidian-mcp/dist/index.js", "--transport=stdio"],
+      "args": ["/absolute/path/to/obsidian-mcp/dist/index.js"],
       "env": {
-        "OBSIDIAN_VAULT_PATH": "/absolute/path/to/your/vault"
+        "OBSIDIAN_VAULT_PATH": "/absolute/path/to/your/vault",
+        "READ_ONLY": "false"
       }
     }
   }
@@ -235,7 +368,7 @@ Add the server to Cursor's MCP configuration in `~/.cursor/mcp.json` or project 
 Test tools interactively in the browser without an external client:
 
 ```bash
-npx @modelcontextprotocol/inspector@latest node dist/index.js --transport=stdio
+npx @modelcontextprotocol/inspector@latest node dist/index.js
 ```
 
 ---

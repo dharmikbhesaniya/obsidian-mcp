@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import path from "node:path";
+import crypto from "node:crypto";
 import { z } from "zod";
 
 dotenv.config();
@@ -83,7 +84,12 @@ const ConfigSchema = z.object({
   AUTH_ENABLED: z
     .union([z.boolean(), z.string().transform((val) => val === "true" || val === "1")])
     .default(false),
+  AUTH_TOKEN: z.string().optional(),
   BEARER_TOKEN_HASH: z.string().optional(),
+  READ_ONLY: z
+    .union([z.boolean(), z.string().transform((val) => val === "true" || val === "1")])
+    .default(false),
+  SCOPES: z.string().optional(),
   AUDIT_LOG_ENABLED: z
     .union([z.boolean(), z.string().transform((val) => val === "true" || val === "1")])
     .default(true),
@@ -118,7 +124,23 @@ const ConfigSchema = z.object({
       path: ["AUTH_ENABLED"],
     });
   }
+
+  if (data.AUTH_TOKEN && !data.BEARER_TOKEN_HASH) {
+    data.BEARER_TOKEN_HASH = importCryptoTokenHash(data.AUTH_TOKEN);
+  }
+
+  if (data.AUTH_ENABLED && !data.BEARER_TOKEN_HASH && !data.AUTH_TOKEN) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "AUTH_ENABLED is true, but neither AUTH_TOKEN nor BEARER_TOKEN_HASH was provided.",
+      path: ["AUTH_TOKEN"],
+    });
+  }
 });
+
+function importCryptoTokenHash(token: string): string {
+  return crypto.createHash("sha256").update(token.trim()).digest("hex");
+}
 
 export type AppConfig = z.infer<typeof ConfigSchema>;
 

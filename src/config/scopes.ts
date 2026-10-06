@@ -121,3 +121,15 @@ export function hasRequiredScope(grantedScopes: ScopeType[], requiredScope: Scop
   }
   return grantedScopes.includes(requiredScope);
 }
+
+/**
+ * Parses a comma-separated string of scopes into valid ScopeType array.
+ */
+export function parseScopes(input?: string): ScopeType[] {
+  if (!input || !input.trim()) return [];
+  const validScopes = Object.values(Scope) as string[];
+  return input
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s): s is ScopeType => validScopes.includes(s));
+}

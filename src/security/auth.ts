@@ -25,10 +25,12 @@ export function getCurrentAuthContext(): AuthContext {
 export class AuthManager {
   private readonly authEnabled: boolean;
   private readonly expectedHash?: string;
+  private readonly readOnly: boolean;
 
   constructor(config: AppConfig) {
     this.authEnabled = config.AUTH_ENABLED;
     this.expectedHash = config.BEARER_TOKEN_HASH;
+    this.readOnly = Boolean(config.READ_ONLY);
   }
 
   /**
@@ -43,16 +45,18 @@ export class AuthManager {
    */
   public authenticateHeader(authHeader?: string): AuthContext {
     if (!this.authEnabled) {
-      // In development / local stdio mode with auth disabled, grant full scopes
+      // In development / local stdio mode with auth disabled, grant full scopes unless read-only
       return {
         clientId: "local-user",
-        scopes: [
-          Scope.VAULT_READ,
-          Scope.VAULT_WRITE,
-          Scope.VAULT_DELETE,
-          Scope.VAULT_ADMIN,
-          Scope.VAULT_DEVELOPER,
-        ],
+        scopes: this.readOnly
+          ? [Scope.VAULT_READ]
+          : [
+              Scope.VAULT_READ,
+              Scope.VAULT_WRITE,
+              Scope.VAULT_DELETE,
+              Scope.VAULT_ADMIN,
+              Scope.VAULT_DEVELOPER,
+            ],
         authenticated: true,
       };
     }
@@ -93,9 +97,13 @@ export class AuthManager {
     // Deterministic credential identifier for rate limiting and session isolation
     const credentialId = `client_${crypto.createHash("sha256").update(providedHash).digest("hex").slice(0, 12)}`;
 
+    const scopes = this.readOnly
+      ? [Scope.VAULT_READ]
+      : [Scope.VAULT_READ, Scope.VAULT_WRITE, Scope.VAULT_DELETE];
+
     return {
       clientId: credentialId,
-      scopes: [Scope.VAULT_READ, Scope.VAULT_WRITE, Scope.VAULT_DELETE],
+      scopes,
       authenticated: true,
     };
   }

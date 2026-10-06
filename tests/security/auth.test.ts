@@ -68,4 +68,18 @@ describe("Security & Auth Manager", () => {
       expect(err.code).toBe(ErrorCode.AUTH_REQUIRED);
     }
   });
+
+  it("should enforce READ_ONLY scope restriction when configured", () => {
+    const readOnlyManager = new AuthManager({
+      ...mockConfig,
+      READ_ONLY: true,
+    });
+
+    const context = readOnlyManager.authenticateHeader(`Bearer ${secretToken}`);
+    expect(context.authenticated).toBe(true);
+    expect(context.scopes).toEqual([Scope.VAULT_READ]);
+    expect(context.scopes).not.toContain(Scope.VAULT_WRITE);
+    expect(context.scopes).not.toContain(Scope.VAULT_DELETE);
+  });
 });
+

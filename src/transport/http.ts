@@ -15,6 +15,14 @@ export interface SseSessionRecord {
   lastActive: number;
 }
 
+export interface HttpSessionRecord {
+  server: McpServer;
+  transport: StreamableHTTPServerTransport;
+  auth: AuthContext;
+  createdAt: number;
+  lastActive: number;
+}
+
 export async function createHttpApp(config: AppConfig) {
   const app = express();
   app.use(express.json({ limit: "10mb" }));
@@ -22,20 +30,13 @@ export async function createHttpApp(config: AppConfig) {
   // Shared subsystem instances for health and authentication
   const { pathGuard, cliAdapter, authManager } = createMcpServer(config);
 
-  // 1. Native Streamable HTTP Transport (/mcp) - Stateless Mode
-  const { server: streamableServer } = createMcpServer(config);
-  const streamableTransport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-  });
-
-  await streamableServer.connect(streamableTransport);
-
-  // 2. Legacy SSE Transport Sessions (/sse, /messages)
+  // 1. Stateful HTTP and SSE Transport Sessions
   const MAX_CONCURRENT_SESSIONS = 50;
   const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
   const sseSessions = new Map<string, SseSessionRecord>();
+  const httpSessions = new Map<string, HttpSessionRecord>();
 
-  // Periodic idle session cleanup for legacy SSE sessions
+  // Periodic idle session cleanup for sessions
   const cleanupInterval = setInterval(() => {
     const now = Date.now();
     for (const [id, record] of sseSessions.entries()) {
@@ -48,6 +49,16 @@ export async function createHttpApp(config: AppConfig) {
         sseSessions.delete(id);
       }
     }
+    for (const [id, record] of httpSessions.entries()) {
+      if (now - record.lastActive > SESSION_IDLE_TIMEOUT_MS) {
+        try {
+          record.transport.close();
+        } catch {
+          // Ignore close error
+        }
+        httpSessions.delete(id);
+      }
+    }
   }, 60 * 1000);
 
   // Operational Health Checks
@@ -55,8 +66,9 @@ export async function createHttpApp(config: AppConfig) {
     res.json({
       status: "ok",
       mcp: "running",
-      activeSessions: sseSessions.size,
+      activeSessions: sseSessions.size + httpSessions.size,
       sseSessions: sseSessions.size,
+      httpSessions: httpSessions.size,
       uptimeSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     });
@@ -87,10 +99,65 @@ export async function createHttpApp(config: AppConfig) {
       const auth = extractAuth(req);
 
       await authStorage.run(auth, async () => {
-        await streamableTransport.handleRequest(req, res, req.body);
+        const sessionId = req.headers["mcp-session-id"] as string | undefined;
+
+        // 1. Route to existing stateful session if session ID is provided and known
+        if (sessionId && httpSessions.has(sessionId)) {
+          const session = httpSessions.get(sessionId)!;
+          session.lastActive = Date.now();
+          await session.transport.handleRequest(req, res, req.body);
+          return;
+        }
+
+        // 2. If initialization request, establish a new stateful session
+        const isInit =
+          (req.body && req.body.method === "initialize") ||
+          (Array.isArray(req.body) && req.body.some((m: any) => m?.method === "initialize"));
+
+        if (isInit) {
+          const { server: sessionServer } = createMcpServer(config);
+          let assignedSessionId: string | undefined;
+
+          const sessionTransport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => {
+              assignedSessionId = crypto.randomUUID();
+              return assignedSessionId;
+            },
+            onsessioninitialized: (id) => {
+              httpSessions.set(id, {
+                server: sessionServer,
+                transport: sessionTransport,
+                auth,
+                createdAt: Date.now(),
+                lastActive: Date.now(),
+              });
+            },
+          });
+
+          sessionTransport.onclose = () => {
+            if (assignedSessionId) {
+              httpSessions.delete(assignedSessionId);
+            }
+          };
+
+          await sessionServer.connect(sessionTransport);
+          await sessionTransport.handleRequest(req, res, req.body);
+          return;
+        }
+
+        // 3. Fallback: Stateless request (fresh transport per request prevents reuse collisions)
+        const { server: statelessServer } = createMcpServer(config);
+        const statelessTransport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+        });
+        await statelessServer.connect(statelessTransport);
+        await statelessTransport.handleRequest(req, res, req.body);
       });
     } catch (err: any) {
-      res.status(err.statusCode || 401).json(err.toJSON ? err.toJSON() : { error: err.message });
+      console.error("[MCP HTTP /mcp Error]:", err);
+      res.status(err.statusCode || (err.name === "ObsidianMcpError" ? 401 : 500)).json(
+        err.toJSON ? err.toJSON() : { error: err.message }
+      );
     }
   });
 
@@ -163,13 +230,13 @@ export async function createHttpApp(config: AppConfig) {
   return {
     app,
     sseSessions,
-    streamableTransport,
+    httpSessions,
     cleanupInterval,
   };
 }
 
 export async function runHttpServer(config: AppConfig) {
-  const { app, sseSessions, streamableTransport, cleanupInterval } = await createHttpApp(config);
+  const { app, sseSessions, httpSessions, cleanupInterval } = await createHttpApp(config);
 
   const httpServer = app.listen(config.PORT, config.HOST, () => {
     console.log(
@@ -182,11 +249,14 @@ export async function runHttpServer(config: AppConfig) {
     console.log(`Received ${signal}. Gracefully shutting down Obsidian MCP server...`);
     clearInterval(cleanupInterval);
 
-    try {
-      await streamableTransport.close();
-    } catch {
-      // Ignore close error
+    for (const [_id, record] of httpSessions.entries()) {
+      try {
+        await record.transport.close();
+      } catch {
+        // Ignore session close error
+      }
     }
+    httpSessions.clear();
 
     for (const [_id, record] of sseSessions.entries()) {
       try {

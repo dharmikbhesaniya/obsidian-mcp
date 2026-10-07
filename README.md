@@ -1,5 +1,7 @@
 # Obsidian Remote MCP Server
 
+[![HOL Guard](https://img.shields.io/endpoint?url=https%3A%2F%2Fhol.org%2Fapi%2Fregistry%2Fbadges%2Fplugin%3Fslug%3Ddharmikbhesaniya%252Fobsidian-mcp%26metric%3Dtrust)](https://hol.org/registry/plugins/dharmikbhesaniya%2Fobsidian-mcp)
+
 [![Version](https://img.shields.io/badge/version-v1.0.0-blue.svg)](https://github.com/dharmikbhesaniya/obsidian-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Protocol](https://img.shields.io/badge/MCP-Model_Context_Protocol-blue.svg)](https://modelcontextprotocol.io)

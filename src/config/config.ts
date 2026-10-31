@@ -188,7 +188,7 @@ export function parseVaultsConfig(
 const ConfigSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   MCP_TRANSPORT: z.enum(["stdio", "http"]).default("stdio"),
-  PORT: z.coerce.number().default(3000),
+  PORT: z.coerce.number().default(9435),
   HOST: z.string().default("127.0.0.1"),
   PUBLIC_URL: z.string().url().optional(),
 

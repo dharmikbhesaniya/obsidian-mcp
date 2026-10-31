@@ -5,11 +5,11 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "${HOST_PORT:-${PORT:-3000}}:${PORT:-3000}"
+      - "${HOST_PORT:-${PORT:-9435}}:${PORT:-9435}"
     environment:
       - NODE_ENV=production
       - MCP_TRANSPORT=http
-      - PORT=${PORT:-3000}
+      - PORT=${PORT:-9435}
       - HOST=0.0.0.0
       - OBSIDIAN_VAULT_PATH=/vault
       - OBSIDIAN_VAULTS=${OBSIDIAN_VAULTS:-}

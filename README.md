@@ -62,7 +62,7 @@ This server is accompanied by the official companion repository: [Universal Obsi
                │         Caddy / Nginx           │
                │      https://mcp.domain.com     │
                └────────────────┬────────────────┘
-                                │ HTTP (127.0.0.1:3000)
+                                │ HTTP (127.0.0.1:9435)
                                 ▼
                ┌─────────────────────────────────┐
                │       Obsidian MCP Server       │
@@ -178,7 +178,7 @@ The Obsidian MCP Server is configured entirely via environment variables (in you
 | `READ_ONLY` | boolean | `false` | Safety toggle. When `true`, restricts all connections strictly to `vault:read` scope, blocking file creation, editing, or deletion. |
 | `SCOPES` | string | *All* | Comma-separated list of granted capabilities: `vault:read`, `vault:write`, `vault:delete`, `vault:admin`, `vault:developer`. |
 | `MCP_TRANSPORT` | enum | `stdio` | Transport mechanism: `stdio` (local subprocess) or `http` (Streamable HTTP `/mcp` and SSE `/sse`). |
-| `PORT` | number | `3000` | Network port when running over HTTP transport. |
+| `PORT` | number | `9435` | Network port when running over HTTP transport. |
 | `HOST` | string | `127.0.0.1` | Network interface binding. Set to `127.0.0.1` behind reverse proxies (Caddy/Nginx). |
 | `RATE_LIMIT_PER_MINUTE` | number | `120` | Maximum allowed tool invocations per minute per client session to prevent runaway AI loops. |
 | `COMMAND_TIMEOUT_MS` | number | `15000` | Timeout threshold (in milliseconds) before CLI subsystem commands are aborted. |
@@ -496,7 +496,7 @@ Configure `/etc/obsidian-mcp/.env`:
 ```ini
 NODE_ENV=production
 MCP_TRANSPORT=http
-PORT=3000
+PORT=9435
 HOST=127.0.0.1
 OBSIDIAN_VAULT_PATH=/srv/obsidian/vault
 OBSIDIAN_BIN_PATH=/usr/bin/obsidian
@@ -537,7 +537,7 @@ Edit `/etc/caddy/Caddyfile`:
 mcp.yourdomain.com {
     encode gzip zstd
 
-    reverse_proxy 127.0.0.1:3000 {
+    reverse_proxy 127.0.0.1:9435 {
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-For {remote_host}
         header_up X-Forwarded-Proto {scheme}
@@ -608,12 +608,12 @@ docker run -d \
   obsidian-remote-mcp
 ```
 
-Alternatively, map a host port to the default container port 3000:
+Alternatively, map a host port to the default container port 9435:
 ```bash
 docker run -d \
   --name obsidian-mcp \
   --restart unless-stopped \
-  -p 8080:3000 \
+  -p 8080:9435 \
   -e AUTH_ENABLED=true \
   -e AUTH_TOKEN=your-custom-secret-token \
   -v /path/to/your/obsidian/vault:/vault \

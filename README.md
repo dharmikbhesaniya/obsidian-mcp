@@ -586,29 +586,28 @@ curl https://mcp.yourdomain.com/ready
 
 ## Docker Deployment (Compose & Docker Run)
 
-The server is fully containerized and can be launched using either `docker run` or `docker compose`.
+The server is fully containerized with default network port **`9435`** and can be launched using either `docker run` or `docker compose`.
 
-### Docker Run with Custom Port and Bearer Token
+### Docker Run with Default Port (9435) and Bearer Token
 
-You can customize the network port and authentication token using environment variables (`-e PORT=...` and `-e AUTH_TOKEN=...`) or CLI flags (`--port=...`).
+The server listens on default port `9435`:
 
 ```bash
 # 1. Build the container image
-docker build -t obsidian-remote-mcp .
+docker build --load -t obsidian-remote-mcp .
 
-# 2. Run with custom port (e.g., 8080) and Bearer token
+# 2. Run with default port 9435 and Bearer token
 docker run -d \
   --name obsidian-mcp \
   --restart unless-stopped \
-  -p 8080:8080 \
-  -e PORT=8080 \
+  -p 9435:9435 \
   -e AUTH_ENABLED=true \
   -e AUTH_TOKEN=your-custom-secret-token \
   -v /path/to/your/obsidian/vault:/vault \
   obsidian-remote-mcp
 ```
 
-Alternatively, map a host port to the default container port 9435:
+Alternatively, map any custom host port (e.g. `8080`) to the container's default port `9435`:
 ```bash
 docker run -d \
   --name obsidian-mcp \
@@ -620,25 +619,25 @@ docker run -d \
   obsidian-remote-mcp
 ```
 
-Or pass the custom port via CLI argument:
+Or pass a custom port inside the container using the `-e PORT=...` environment variable or `--port=...` CLI argument:
 ```bash
 docker run -d \
   --name obsidian-mcp \
   --restart unless-stopped \
   -p 8080:8080 \
+  -e PORT=8080 \
   -e AUTH_ENABLED=true \
   -e AUTH_TOKEN=your-custom-secret-token \
   -v /path/to/your/obsidian/vault:/vault \
-  obsidian-remote-mcp \
-  node dist/index.js --transport=http --port=8080
+  obsidian-remote-mcp
 ```
 
 ### Docker Compose Deployment
 
-Configure `.env` in the repository directory:
+Configure `.env` in the repository directory (defaults to port `9435`):
 ```ini
-# Network Port
-PORT=8080
+# Network Port (defaults to 9435)
+PORT=9435
 
 # Host Vault Mount Path
 OBSIDIAN_VAULT_PATH=/path/to/your/obsidian/vault
@@ -655,8 +654,8 @@ docker compose up -d
 
 Verify service status:
 ```bash
-curl http://127.0.0.1:8080/health
-curl http://127.0.0.1:8080/ready
+curl http://127.0.0.1:9435/health
+curl http://127.0.0.1:9435/ready
 ```
 
 ---

@@ -58,6 +58,15 @@ flowchart TD
    - Supported across all endpoints: Streamable HTTP (`/mcp`), Server-Sent Events (`/sse`), and legacy message relays (`/messages`).
    - Specifically engineered for cloud clients like ChatGPT Plugins that do not allow manual configuration of custom request headers.
 
+### Default Port & Endpoint Reference
+
+The Obsidian MCP Server defaults to port **`9435`** across container, compose, and bare-metal environments:
+- **Default Port**: `9435`
+- **Streamable HTTP Endpoint**: `http://127.0.0.1:9435/mcp` (or via TLS reverse proxy / tunnel)
+- **Legacy SSE Endpoint**: `http://127.0.0.1:9435/sse`
+- **Health Check**: `http://127.0.0.1:9435/health`
+- **Readiness Check**: `http://127.0.0.1:9435/ready`
+
 ### Security Guarantees
 - **Timing-Safe Evaluation**: All credential checks execute using `crypto.timingSafeEqual` over SHA-256 digests. This prevents side-channel timing analysis attacks regardless of input token length.
 - **Fail-Closed Default**: Requests lacking valid credentials immediately return HTTP `401 Unauthorized` without accessing file system resources.

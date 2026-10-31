@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { z } from "zod";
@@ -162,11 +163,42 @@ export function parseVaultsConfig(
   if (vaultPath && vaultPath.trim()) {
     const singleVaultPath = vaultPath.trim();
     const vaultBase = path.basename(singleVaultPath) || "default";
-    const def = parsePathAndMode(vaultBase, singleVaultPath);
+
+    // Auto-discover sub-vaults if this is a parent directory containing multiple vaults
     if (Object.keys(vaults).length === 0) {
-      vaults[vaultBase] = def.path;
-      vaultDefinitions[vaultBase] = def;
+      let discoveredSubVaults: string[] = [];
+      try {
+        if (fs.existsSync(singleVaultPath) && fs.statSync(singleVaultPath).isDirectory()) {
+          const hasOwnObsidian = fs.existsSync(path.join(singleVaultPath, ".obsidian"));
+          // If the directory does not have its own .obsidian, or if auto-scan finds subdirectories with .obsidian
+          const entries = fs.readdirSync(singleVaultPath, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory() && !entry.name.startsWith(".")) {
+              const subObsidian = path.join(singleVaultPath, entry.name, ".obsidian");
+              if (fs.existsSync(subObsidian) && fs.statSync(subObsidian).isDirectory()) {
+                discoveredSubVaults.push(entry.name);
+              }
+            }
+          }
+        }
+      } catch {
+        // If filesystem check fails, proceed with single vault path
+      }
+
+      if (discoveredSubVaults.length > 0) {
+        for (const subName of discoveredSubVaults) {
+          const subPath = path.join(singleVaultPath, subName);
+          const def = parsePathAndMode(subName, subPath);
+          vaults[subName] = def.path;
+          vaultDefinitions[subName] = def;
+        }
+      } else {
+        const def = parsePathAndMode(vaultBase, singleVaultPath);
+        vaults[vaultBase] = def.path;
+        vaultDefinitions[vaultBase] = def;
+      }
     } else if (!vaults[vaultBase] && !vaults["default"]) {
+      const def = parsePathAndMode(vaultBase, singleVaultPath);
       vaults["default"] = def.path;
       vaultDefinitions["default"] = { ...def, name: "default" };
     }

@@ -43,6 +43,16 @@ describe("Multi-Vault Architecture & Isolation", () => {
       expect(parsed.defaultVault).toBe("my-vault");
     });
 
+    it("should auto-discover sub-vaults if parent directory contains subdirectories with .obsidian", () => {
+      fs.mkdirSync(path.join(personalVaultDir, ".obsidian"), { recursive: true });
+      fs.mkdirSync(path.join(workVaultDir, ".obsidian"), { recursive: true });
+
+      const parsed = parseVaultsConfig(tempBaseDir);
+      expect(Object.keys(parsed.vaults).sort()).toEqual(["personal-vault", "work-vault"].sort());
+      expect(parsed.vaults["personal-vault"]).toBe(personalVaultDir);
+      expect(parsed.vaults["work-vault"]).toBe(workVaultDir);
+    });
+
     it("should parse JSON dictionary format", () => {
       const input = JSON.stringify({
         personal: "/path/to/personal",

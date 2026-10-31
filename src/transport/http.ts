@@ -27,6 +27,22 @@ export async function createHttpApp(config: AppConfig) {
   const app = express();
   app.use(express.json({ limit: "10mb" }));
 
+  // Enable CORS for browser-based AI agents, web frontends, and inspectors
+  app.use((req: Request, res: Response, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, mcp-session-id, x-session-id"
+    );
+    res.setHeader("Access-Control-Expose-Headers", "mcp-session-id, x-session-id");
+    if (req.method === "OPTIONS") {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+
   // Shared subsystem instances for health and authentication
   const { pathGuard, cliAdapter, authManager } = createMcpServer(config);
 
@@ -60,6 +76,7 @@ export async function createHttpApp(config: AppConfig) {
       }
     }
   }, 60 * 1000);
+  cleanupInterval.unref();
 
   // Operational Health Checks
   app.get("/health", (_req: Request, res: Response) => {
@@ -88,9 +105,16 @@ export async function createHttpApp(config: AppConfig) {
     });
   });
 
-  // Extract AuthContext safely; throws AUTH_REQUIRED if missing or invalid
+  // Extract AuthContext safely; supports Authorization header or query parameter
   const extractAuth = (req: Request): AuthContext => {
-    return authManager.authenticateHeader(req.headers.authorization);
+    const header = req.headers.authorization;
+    const queryToken =
+      (typeof req.query.token === "string" && req.query.token) ||
+      (typeof req.query.auth_token === "string" && req.query.auth_token) ||
+      (typeof req.query.bearer_token === "string" && req.query.bearer_token) ||
+      undefined;
+    const authHeader = header || (queryToken ? `Bearer ${queryToken}` : undefined);
+    return authManager.authenticateHeader(authHeader);
   };
 
   // Canonical MCP Streamable HTTP endpoint
@@ -173,7 +197,15 @@ export async function createHttpApp(config: AppConfig) {
 
       await authStorage.run(auth, async () => {
         const { server: sessionServer } = createMcpServer(config);
-        const transport = new SSEServerTransport("/messages", res);
+        const queryToken =
+          (typeof req.query.token === "string" && req.query.token) ||
+          (typeof req.query.auth_token === "string" && req.query.auth_token) ||
+          (typeof req.query.bearer_token === "string" && req.query.bearer_token) ||
+          "";
+        const messagesEndpoint = queryToken
+          ? `/messages?token=${encodeURIComponent(queryToken)}`
+          : "/messages";
+        const transport = new SSEServerTransport(messagesEndpoint, res);
         const record: SseSessionRecord = {
           server: sessionServer,
           transport,

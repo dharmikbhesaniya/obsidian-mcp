@@ -8,20 +8,36 @@ import { Scope } from "../config/scopes.js";
 export async function runStdioServer(config: AppConfig) {
   // If AUTH_ENABLED is set for stdio, verify that an auth token is provided in the process environment
   if (config.AUTH_ENABLED) {
-    const providedToken = process.env.MCP_AUTH_TOKEN || process.env.AUTH_TOKEN;
+    const providedToken =
+      process.env.MCP_AUTH_TOKEN || process.env.AUTH_TOKEN || process.env.BEARER_TOKEN;
     if (!providedToken) {
       console.error(
-        "FATAL: AUTH_ENABLED=true in stdio mode, but no AUTH_TOKEN / MCP_AUTH_TOKEN was provided in environment."
+        "FATAL: AUTH_ENABLED=true in stdio mode, but no AUTH_TOKEN / MCP_AUTH_TOKEN / BEARER_TOKEN was provided in environment."
       );
       process.exit(1);
     }
     const providedHash = AuthManager.hashToken(providedToken.trim());
     const expectedHash = config.BEARER_TOKEN_HASH;
+    let matches = false;
+
     if (
-      !expectedHash ||
-      providedHash.length !== expectedHash.length ||
-      !crypto.timingSafeEqual(Buffer.from(providedHash, "utf-8"), Buffer.from(expectedHash, "utf-8"))
+      expectedHash &&
+      providedHash.length === expectedHash.length &&
+      crypto.timingSafeEqual(Buffer.from(providedHash, "utf-8"), Buffer.from(expectedHash, "utf-8"))
     ) {
+      matches = true;
+    } else if (config.AUTH_TOKEN || (config as any).BEARER_TOKEN) {
+      const raw = (config.AUTH_TOKEN || (config as any).BEARER_TOKEN).trim();
+      const rawProvided = providedToken.trim();
+      if (
+        raw.length === rawProvided.length &&
+        crypto.timingSafeEqual(Buffer.from(raw, "utf-8"), Buffer.from(rawProvided, "utf-8"))
+      ) {
+        matches = true;
+      }
+    }
+
+    if (!matches) {
       console.error(
         "FATAL: Provided AUTH_TOKEN / MCP_AUTH_TOKEN does not match configured credentials."
       );

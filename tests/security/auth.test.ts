@@ -84,5 +84,33 @@ describe("Security & Auth Manager", () => {
     expect(context.scopes).not.toContain(Scope.VAULT_WRITE);
     expect(context.scopes).not.toContain(Scope.VAULT_DELETE);
   });
+
+  it("should authenticate when raw plaintext token is provided in BEARER_TOKEN_HASH (Docker compose scenario)", () => {
+    const rawSecret = "my-docker-plaintext-secret";
+    const dockerManager = new AuthManager({
+      ...mockConfig,
+      BEARER_TOKEN_HASH: rawSecret, // user passed plaintext instead of sha256 hash
+    });
+
+    const context = dockerManager.authenticateHeader(`Bearer ${rawSecret}`);
+    expect(context.authenticated).toBe(true);
+  });
+
+  it("should authenticate when token is configured via AUTH_TOKEN", () => {
+    const token = "custom-auth-passkey";
+    const tokenManager = new AuthManager({
+      ...mockConfig,
+      AUTH_TOKEN: token,
+      BEARER_TOKEN_HASH: undefined,
+    });
+
+    const context = tokenManager.authenticateHeader(`Bearer ${token}`);
+    expect(context.authenticated).toBe(true);
+  });
+
+  it("should authenticate case-insensitively with 'bearer <token>'", () => {
+    const context = authManager.authenticateHeader(`bearer ${secretToken}`);
+    expect(context.authenticated).toBe(true);
+  });
 });
 

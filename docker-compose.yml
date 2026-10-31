@@ -5,14 +5,26 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:3000"
+      - "${HOST_PORT:-${PORT:-3000}}:${PORT:-3000}"
     environment:
       - NODE_ENV=production
       - MCP_TRANSPORT=http
-      - PORT=3000
+      - PORT=${PORT:-3000}
       - HOST=0.0.0.0
       - OBSIDIAN_VAULT_PATH=/vault
-      - AUTH_ENABLED=true
-      - BEARER_TOKEN_HASH=${BEARER_TOKEN_HASH}
+      - OBSIDIAN_VAULTS=${OBSIDIAN_VAULTS:-}
+      - OBSIDIAN_DEFAULT_VAULT=${OBSIDIAN_DEFAULT_VAULT:-}
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+      - BEARER_TOKEN=${BEARER_TOKEN:-}
+      - BEARER_TOKEN_HASH=${BEARER_TOKEN_HASH:-}
+      - READ_ONLY=${READ_ONLY:-false}
+      - SCOPES=${SCOPES:-}
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-120}
+      - MAX_SEARCH_RESULTS=${MAX_SEARCH_RESULTS:-50}
+      - COMMAND_TIMEOUT_MS=${COMMAND_TIMEOUT_MS:-15000}
+      - ENABLE_DESTRUCTIVE_TOOLS=${ENABLE_DESTRUCTIVE_TOOLS:-true}
+      - ENABLE_ADVANCED_CLI=${ENABLE_ADVANCED_CLI:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
-      - /srv/obsidian/vault:/vault
+      - ${HOST_VAULT_PATH:-${OBSIDIAN_VAULT_PATH:-./vault}}:/vault

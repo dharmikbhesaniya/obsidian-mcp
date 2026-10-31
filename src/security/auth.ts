@@ -25,12 +25,29 @@ export function getCurrentAuthContext(): AuthContext {
 export class AuthManager {
   private readonly authEnabled: boolean;
   private readonly expectedHash?: string;
+  private readonly rawToken?: string;
   private readonly readOnly: boolean;
 
   constructor(config: AppConfig) {
     this.authEnabled = config.AUTH_ENABLED;
-    this.expectedHash = config.BEARER_TOKEN_HASH;
     this.readOnly = Boolean(config.READ_ONLY);
+
+    const raw = config.AUTH_TOKEN || (config as any).BEARER_TOKEN;
+    this.rawToken = raw ? raw.trim() : undefined;
+
+    if (config.BEARER_TOKEN_HASH && config.BEARER_TOKEN_HASH.trim().length > 0) {
+      const trimmedHash = config.BEARER_TOKEN_HASH.trim();
+      const isSha256 = /^[a-f0-9]{64}$/i.test(trimmedHash);
+      if (isSha256) {
+        this.expectedHash = trimmedHash;
+      } else {
+        // Plaintext token was supplied in BEARER_TOKEN_HASH
+        this.rawToken = this.rawToken || trimmedHash;
+        this.expectedHash = AuthManager.hashToken(trimmedHash);
+      }
+    } else if (this.rawToken) {
+      this.expectedHash = AuthManager.hashToken(this.rawToken);
+    }
   }
 
   /**
@@ -61,7 +78,7 @@ export class AuthManager {
       };
     }
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    if (!authHeader) {
       throw new ObsidianMcpError(
         ErrorCode.AUTH_REQUIRED,
         "Missing or malformed Authorization header. Expected 'Bearer <token>'.",
@@ -69,12 +86,19 @@ export class AuthManager {
       );
     }
 
-    const rawToken = authHeader.slice(7).trim();
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    if (!match) {
+      throw new ObsidianMcpError(
+        ErrorCode.AUTH_REQUIRED,
+        "Missing or malformed Authorization header. Expected 'Bearer <token>'.",
+        401
+      );
+    }
+
+    const rawToken = match[1].trim();
     if (!rawToken) {
       throw new ObsidianMcpError(ErrorCode.AUTH_REQUIRED, "Empty bearer token provided", 401);
     }
-
-    const providedHash = AuthManager.hashToken(rawToken);
 
     if (!this.expectedHash) {
       throw new ObsidianMcpError(
@@ -84,13 +108,28 @@ export class AuthManager {
       );
     }
 
+    const providedHash = AuthManager.hashToken(rawToken);
     const expectedBuffer = Buffer.from(this.expectedHash, "utf-8");
     const providedBuffer = Buffer.from(providedHash, "utf-8");
 
+    let isAuthenticated = false;
     if (
-      expectedBuffer.length !== providedBuffer.length ||
-      !crypto.timingSafeEqual(expectedBuffer, providedBuffer)
+      expectedBuffer.length === providedBuffer.length &&
+      crypto.timingSafeEqual(expectedBuffer, providedBuffer)
     ) {
+      isAuthenticated = true;
+    } else if (this.rawToken) {
+      const rawExpectedBuffer = Buffer.from(this.rawToken, "utf-8");
+      const rawProvidedBuffer = Buffer.from(rawToken, "utf-8");
+      if (
+        rawExpectedBuffer.length === rawProvidedBuffer.length &&
+        crypto.timingSafeEqual(rawExpectedBuffer, rawProvidedBuffer)
+      ) {
+        isAuthenticated = true;
+      }
+    }
+
+    if (!isAuthenticated) {
       throw new ObsidianMcpError(ErrorCode.AUTH_REQUIRED, "Invalid access token credentials", 401);
     }
 

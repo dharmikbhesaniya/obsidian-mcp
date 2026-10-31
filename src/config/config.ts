@@ -204,8 +204,21 @@ const ConfigSchema = z.object({
   AUTH_ENABLED: z
     .union([z.boolean(), z.string().transform((val) => val === "true" || val === "1")])
     .default(false),
-  AUTH_TOKEN: z.string().optional(),
-  BEARER_TOKEN_HASH: z.string().optional(),
+  AUTH_TOKEN: z
+    .string()
+    .trim()
+    .optional()
+    .transform((val) => (val && val.length > 0 ? val : undefined)),
+  BEARER_TOKEN: z
+    .string()
+    .trim()
+    .optional()
+    .transform((val) => (val && val.length > 0 ? val : undefined)),
+  BEARER_TOKEN_HASH: z
+    .string()
+    .trim()
+    .optional()
+    .transform((val) => (val && val.length > 0 ? val : undefined)),
   READ_ONLY: z
     .union([z.boolean(), z.string().transform((val) => val === "true" || val === "1")])
     .default(false),
@@ -245,14 +258,30 @@ const ConfigSchema = z.object({
     });
   }
 
-  if (data.AUTH_TOKEN && !data.BEARER_TOKEN_HASH) {
-    data.BEARER_TOKEN_HASH = importCryptoTokenHash(data.AUTH_TOKEN);
+  // Handle token inputs (AUTH_TOKEN, BEARER_TOKEN, or BEARER_TOKEN_HASH)
+  const rawToken = data.AUTH_TOKEN || data.BEARER_TOKEN;
+
+  if (rawToken && !data.BEARER_TOKEN_HASH) {
+    data.BEARER_TOKEN_HASH = importCryptoTokenHash(rawToken);
+    if (!data.AUTH_TOKEN) {
+      data.AUTH_TOKEN = rawToken;
+    }
+  } else if (data.BEARER_TOKEN_HASH) {
+    // If BEARER_TOKEN_HASH was supplied, check if it's already a 64-character SHA-256 hex string.
+    // If not, the user entered a raw plaintext token into BEARER_TOKEN_HASH.
+    const isSha256Hex = /^[a-f0-9]{64}$/i.test(data.BEARER_TOKEN_HASH.trim());
+    if (!isSha256Hex) {
+      if (!data.AUTH_TOKEN) {
+        data.AUTH_TOKEN = data.BEARER_TOKEN_HASH;
+      }
+      data.BEARER_TOKEN_HASH = importCryptoTokenHash(data.BEARER_TOKEN_HASH);
+    }
   }
 
-  if (data.AUTH_ENABLED && !data.BEARER_TOKEN_HASH && !data.AUTH_TOKEN) {
+  if (data.AUTH_ENABLED && !data.BEARER_TOKEN_HASH && !data.AUTH_TOKEN && !data.BEARER_TOKEN) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "AUTH_ENABLED is true, but neither AUTH_TOKEN nor BEARER_TOKEN_HASH was provided.",
+      message: "AUTH_ENABLED is true, but neither AUTH_TOKEN, BEARER_TOKEN, nor BEARER_TOKEN_HASH was provided.",
       path: ["AUTH_TOKEN"],
     });
   }

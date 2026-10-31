@@ -36,6 +36,9 @@ This server is accompanied by the official companion repository: [Universal Obsi
   - [Step 5: Deploy the MCP Server](#step-5-deploy-the-mcp-server)
   - [Step 6: Configure Reverse Proxy with TLS (Caddy or Nginx)](#step-6-configure-reverse-proxy-with-tls-caddy-or-nginx)
   - [Step 7: Verify Health Endpoints](#step-7-verify-health-endpoints)
+- [Docker Deployment (Compose & Docker Run)](#docker-deployment-compose--docker-run)
+  - [Docker Run with Custom Port and Bearer Token](#docker-run-with-custom-port-and-bearer-token)
+  - [Docker Compose Deployment](#docker-compose-deployment)
 - [Connecting Remote Clients](#connecting-remote-clients)
   - [Connecting ChatGPT](#connecting-chatgpt)
   - [Connecting Remote Claude](#connecting-remote-claude)
@@ -581,20 +584,104 @@ curl https://mcp.yourdomain.com/ready
 
 ---
 
+## Docker Deployment (Compose & Docker Run)
+
+The server is fully containerized and can be launched using either `docker run` or `docker compose`.
+
+### Docker Run with Custom Port and Bearer Token
+
+You can customize the network port and authentication token using environment variables (`-e PORT=...` and `-e AUTH_TOKEN=...`) or CLI flags (`--port=...`).
+
+```bash
+# 1. Build the container image
+docker build -t obsidian-remote-mcp .
+
+# 2. Run with custom port (e.g., 8080) and Bearer token
+docker run -d \
+  --name obsidian-mcp \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -e PORT=8080 \
+  -e AUTH_ENABLED=true \
+  -e AUTH_TOKEN=your-custom-secret-token \
+  -v /path/to/your/obsidian/vault:/vault \
+  obsidian-remote-mcp
+```
+
+Alternatively, map a host port to the default container port 3000:
+```bash
+docker run -d \
+  --name obsidian-mcp \
+  --restart unless-stopped \
+  -p 8080:3000 \
+  -e AUTH_ENABLED=true \
+  -e AUTH_TOKEN=your-custom-secret-token \
+  -v /path/to/your/obsidian/vault:/vault \
+  obsidian-remote-mcp
+```
+
+Or pass the custom port via CLI argument:
+```bash
+docker run -d \
+  --name obsidian-mcp \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -e AUTH_ENABLED=true \
+  -e AUTH_TOKEN=your-custom-secret-token \
+  -v /path/to/your/obsidian/vault:/vault \
+  obsidian-remote-mcp \
+  node dist/index.js --transport=http --port=8080
+```
+
+### Docker Compose Deployment
+
+Configure `.env` in the repository directory:
+```ini
+# Network Port
+PORT=8080
+
+# Host Vault Mount Path
+OBSIDIAN_VAULT_PATH=/path/to/your/obsidian/vault
+
+# Authentication
+AUTH_ENABLED=true
+AUTH_TOKEN=your-custom-secret-token
+```
+
+Start the service:
+```bash
+docker compose up -d
+```
+
+Verify service status:
+```bash
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/ready
+```
+
+---
+
 ## Connecting Remote Clients
+
+For a comprehensive guide covering token passing, OAuth vs. direct tokens, and cloud tunnel setup, see [CLIENT_AUTHENTICATION_GUIDE.md](file:///Users/dharmikbhesaniya/Project/opensource/obsidian-skills/obsidian-mcp/CLIENT_AUTHENTICATION_GUIDE.md).
 
 The server provides two HTTP transport modes:
 - **Streamable HTTP (`/mcp`)**: Native high-performance streaming transport for modern MCP clients.
 - **Server-Sent Events (`/sse`)**: Dedicated SSE stream transport with `/messages` for legacy MCP clients.
 
-### Connecting ChatGPT
+### Connecting ChatGPT (Plugins & Custom MCP Servers)
 
-1. In ChatGPT, open **Explore GPTs** &rarr; **Create a GPT** (or configure **Custom Actions**).
-2. For remote MCP connections, configure the endpoint:
-   - **URL**: `https://mcp.yourdomain.com/sse` (or `/mcp` for Streamable HTTP clients)
-   - **Authentication**: `Bearer`
-   - **Token**: `<your_raw_bearer_token>`
-3. ChatGPT will discover all active semantic tools via the MCP protocol and display them under capabilities.
+When connecting via **ChatGPT** &rarr; **Plugins** &rarr; **Add custom MCP server**:
+
+1. **Connection**: Select **`Server URL`**.
+2. **Server URL**: Enter your public HTTPS URL with your token appended:
+   ```text
+   https://<your-domain-or-tunnel>/mcp?token=your-secret-token
+   ```
+3. **Authentication**: Select **`No authentication`** from the dropdown *(ChatGPT will pass the token in the URL directly to the server)*.
+4. Check **"I understand and want to continue"** and click **Create as a plugin**.
+
+*(Note: If hosting locally on Docker, expose port 9435 using a tunnel like `ngrok http 9435` so ChatGPT's cloud servers can connect).*
 
 ### Connecting Remote Claude
 

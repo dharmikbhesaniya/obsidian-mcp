@@ -212,4 +212,51 @@ describe("HTTP Transport Integration", () => {
       });
     }).toThrowError(/Fatal security violation/);
   });
+
+  it("should respond 204 to CORS preflight OPTIONS requests without requiring authentication", async () => {
+    const { app } = await setupApp({
+      AUTH_ENABLED: true,
+      BEARER_TOKEN_HASH: tokenAHash,
+    });
+
+    const res = await dispatchRequest(app, {
+      method: "OPTIONS",
+      url: "/mcp",
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers["access-control-allow-origin"]).toBe("*");
+  });
+
+  it("should authenticate via query parameter token (?token=...)", async () => {
+    const { app, sseSessions } = await setupApp({
+      AUTH_ENABLED: true,
+      BEARER_TOKEN_HASH: tokenAHash,
+    });
+
+    // Request to /messages with ?token= query parameter instead of header
+    const res = await dispatchRequest(app, {
+      method: "POST",
+      url: `/messages?sessionId=non-existent&token=${validTokenA}`,
+      body: { jsonrpc: "2.0", id: 1 },
+    });
+    // It should successfully pass authentication (returns 404 for session not found, rather than 401 unauthenticated)
+    expect(res.status).toBe(404);
+  });
+
+  it("should authenticate over HTTP when plaintext token is provided in BEARER_TOKEN_HASH", async () => {
+    const plainToken = "docker-secret-pass-99";
+    const { app } = await setupApp({
+      AUTH_ENABLED: true,
+      BEARER_TOKEN_HASH: plainToken,
+    });
+
+    const res = await dispatchRequest(app, {
+      method: "POST",
+      url: `/messages?sessionId=non-existent`,
+      headers: { authorization: `Bearer ${plainToken}` },
+      body: { jsonrpc: "2.0", id: 1 },
+    });
+    // Passed auth check successfully (returns 404 for non-existent session, not 401)
+    expect(res.status).toBe(404);
+  });
 });

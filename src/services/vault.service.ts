@@ -195,8 +195,14 @@ export class VaultService {
       path: string;
       isDefault: boolean;
       totalFiles: number;
+      markdownFiles: number;
+      totalFolders: number;
+      topLevelFolders: string[];
       readOnly: boolean;
+      accessMode: "read-only" | "read/write";
       scopes?: ScopeType[];
+      status: string;
+      summary: string;
     }> = [];
     const seenNames = new Set<string>();
     const seenRoots = new Set<string>();
@@ -210,15 +216,32 @@ export class VaultService {
       seenRoots.add(instance.root);
 
       let totalFiles = 0;
+      let markdownFiles = 0;
+      let totalFolders = 0;
+      const topLevelFolders: string[] = [];
+
       try {
+        const rootEntries = fs.readdirSync(instance.root, { withFileTypes: true });
+        for (const entry of rootEntries) {
+          if (!entry.name.startsWith(".")) {
+            if (entry.isDirectory()) {
+              topLevelFolders.push(entry.name);
+            }
+          }
+        }
+
         const walk = (dir: string) => {
           const entries = fs.readdirSync(dir, { withFileTypes: true });
           for (const entry of entries) {
             if (entry.name.startsWith(".")) continue;
             if (entry.isDirectory()) {
+              totalFolders++;
               walk(path.join(dir, entry.name));
             } else {
               totalFiles++;
+              if (entry.name.endsWith(".md")) {
+                markdownFiles++;
+              }
             }
           }
         };
@@ -227,17 +250,27 @@ export class VaultService {
         // Fallback
       }
 
+      const accessMode = instance.readOnly ? "read-only" : "read/write";
+
       list.push({
         name: instance.name,
         path: instance.root,
         isDefault: instance.name === this.defaultVaultName,
         totalFiles,
+        markdownFiles,
+        totalFolders,
+        topLevelFolders: topLevelFolders.sort(),
         readOnly: instance.readOnly,
+        accessMode,
         scopes: instance.scopes,
+        status: "accessible",
+        summary: `Vault '${instance.name}' located at '${instance.root}' (${accessMode}, ${totalFiles} total files, ${markdownFiles} markdown notes across ${topLevelFolders.length} root folders).`,
       });
     }
 
+    const names = list.map((v) => v.name).join(", ");
     return {
+      summary: `Found ${list.length} configured vault(s): [${names}]. Active default vault: '${this.defaultVaultName}'.`,
       defaultVault: this.defaultVaultName,
       totalVaults: list.length,
       vaults: list,
@@ -248,15 +281,32 @@ export class VaultService {
     const vault = this.resolveVault(vaultName);
     const root = vault.pathGuard.getVaultRoot();
     let totalFiles = 0;
+    let markdownFiles = 0;
+    let totalFolders = 0;
+    const topLevelFolders: string[] = [];
+
     try {
+      const rootEntries = fs.readdirSync(root, { withFileTypes: true });
+      for (const entry of rootEntries) {
+        if (!entry.name.startsWith(".")) {
+          if (entry.isDirectory()) {
+            topLevelFolders.push(entry.name);
+          }
+        }
+      }
+
       const walk = (dir: string) => {
         const entries = fs.readdirSync(dir, { withFileTypes: true });
         for (const entry of entries) {
           if (entry.name.startsWith(".")) continue;
           if (entry.isDirectory()) {
+            totalFolders++;
             walk(path.join(dir, entry.name));
           } else {
             totalFiles++;
+            if (entry.name.endsWith(".md")) {
+              markdownFiles++;
+            }
           }
         }
       };
@@ -266,6 +316,7 @@ export class VaultService {
     }
 
     const cliReachable = await this.cliAdapter.checkReachability();
+    const accessMode = vault.readOnly ? "read-only" : "read/write";
 
     return {
       vaultId: vault.name,
@@ -276,8 +327,13 @@ export class VaultService {
       vaultAccessible: true,
       obsidianCli: cliReachable ? "connected" : "unavailable",
       readOnly: vault.readOnly,
+      accessMode,
       scopes: vault.scopes,
       totalFiles,
+      markdownFiles,
+      totalFolders,
+      topLevelFolders: topLevelFolders.sort(),
+      summary: `Vault '${vault.name}' at '${root}': ${accessMode}, ${totalFiles} files (${markdownFiles} markdown notes) in ${topLevelFolders.length} top-level folders.`,
     };
   }
 

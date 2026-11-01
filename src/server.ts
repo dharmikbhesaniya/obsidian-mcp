@@ -39,7 +39,8 @@ export function createMcpServer(
     config.OBSIDIAN_READ_ONLY_VAULTS,
     config.OBSIDIAN_VAULT_SCOPES,
     autoDiscoverReadOnly,
-    config.OBSIDIAN_ENABLE_AUTO_DISCOVERY
+    config.OBSIDIAN_ENABLE_AUTO_DISCOVERY,
+    config.OBSIDIAN_VAULT_ALIASES
   );
   const cliAdapter = new ObsidianCliAdapter(config.OBSIDIAN_BIN_PATH, config.COMMAND_TIMEOUT_MS);
   const vaultService = new VaultService(
@@ -50,7 +51,8 @@ export function createMcpServer(
     parsed.vaultDefinitions,
     parsed.scanRoots,
     autoDiscoverReadOnly,
-    config.OBSIDIAN_ENABLE_AUTO_DISCOVERY
+    config.OBSIDIAN_ENABLE_AUTO_DISCOVERY,
+    parsed.aliases
   );
   const authManager = new AuthManager(config);
   const rateLimiter = new RateLimiter(config.RATE_LIMIT_PER_MINUTE);

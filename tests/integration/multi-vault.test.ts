@@ -520,4 +520,147 @@ describe("Multi-Vault Architecture & Isolation", () => {
       expect(readRes.content).toContain("Personal Journal");
     });
   });
+
+  describe("Smart Vault Disambiguation & Alias Resolution", () => {
+    let proVaultDir: string;
+    let dailyVaultDir: string;
+
+    beforeEach(() => {
+      proVaultDir = path.join(tempBaseDir, "dharmik-professional-obsidian-vault");
+      dailyVaultDir = path.join(tempBaseDir, "obsidian-daily-update-report");
+
+      fs.mkdirSync(path.join(proVaultDir, ".obsidian"), { recursive: true });
+      fs.mkdirSync(path.join(dailyVaultDir, ".obsidian"), { recursive: true });
+
+      fs.writeFileSync(path.join(proVaultDir, "Architecture.md"), "# Architecture\nSpecs.");
+      fs.writeFileSync(path.join(dailyVaultDir, "2026-11-01.md"), "# Daily Standup\nUpdates.");
+    });
+
+    it("should automatically resolve colloquial aliases for long vault names", () => {
+      const service = new VaultService(
+        {
+          "dharmik-professional-obsidian-vault": proVaultDir,
+          "obsidian-daily-update-report": dailyVaultDir,
+        },
+        cliAdapter,
+        undefined,
+        "dharmik-professional-obsidian-vault"
+      );
+
+      // Verify colloquial alias resolution for daily vault
+      expect(service.resolveVault("daily").name).toBe("obsidian-daily-update-report");
+      expect(service.resolveVault("daily vault").name).toBe("obsidian-daily-update-report");
+      expect(service.resolveVault("daily update").name).toBe("obsidian-daily-update-report");
+      expect(service.resolveVault("report").name).toBe("obsidian-daily-update-report");
+
+      // Verify colloquial alias resolution for professional vault
+      expect(service.resolveVault("dharmik").name).toBe("dharmik-professional-obsidian-vault");
+      expect(service.resolveVault("professional").name).toBe("dharmik-professional-obsidian-vault");
+      expect(service.resolveVault("professional vault").name).toBe("dharmik-professional-obsidian-vault");
+      expect(service.resolveVault("dharmik professional").name).toBe("dharmik-professional-obsidian-vault");
+    });
+
+    it("should detect ambiguity and throw AMBIGUOUS_VAULT when input matches multiple vaults", () => {
+      const service = new VaultService(
+        {
+          "dharmik-professional-obsidian-vault": proVaultDir,
+          "obsidian-daily-update-report": dailyVaultDir,
+        },
+        cliAdapter,
+        undefined,
+        "dharmik-professional-obsidian-vault"
+      );
+
+      // Querying generic stop word "obsidian" should trigger AMBIGUOUS_VAULT
+      try {
+        service.resolveVault("obsidian");
+        expect.unreachable("Should have thrown AMBIGUOUS_VAULT error");
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ObsidianMcpError);
+        expect(err.code).toBe(ErrorCode.AMBIGUOUS_VAULT);
+        expect(err.statusCode).toBe(400);
+        expect(err.details?.candidates).toContain("dharmik-professional-obsidian-vault");
+        expect(err.details?.candidates).toContain("obsidian-daily-update-report");
+        expect(err.message).toContain("Ambiguous vault reference");
+      }
+
+      // Querying generic stop word "vault" should also trigger AMBIGUOUS_VAULT
+      try {
+        service.resolveVault("vault");
+        expect.unreachable("Should have thrown AMBIGUOUS_VAULT error");
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ObsidianMcpError);
+        expect(err.code).toBe(ErrorCode.AMBIGUOUS_VAULT);
+        expect(err.details?.candidates.length).toBeGreaterThanOrEqual(2);
+      }
+    });
+
+    it("should honor explicit custom aliases from OBSIDIAN_VAULT_ALIASES", async () => {
+      const { vaultService } = createMcpServer({
+        NODE_ENV: "test",
+        MCP_TRANSPORT: "stdio",
+        PORT: 3000,
+        HOST: "127.0.0.1",
+        OBSIDIAN_VAULTS: {
+          "dharmik-professional-obsidian-vault": proVaultDir,
+          "obsidian-daily-update-report": dailyVaultDir,
+        },
+        OBSIDIAN_VAULT_ALIASES: "daily=obsidian-daily-update-report,work=dharmik-professional-obsidian-vault",
+        OBSIDIAN_DEFAULT_VAULT: "dharmik-professional-obsidian-vault",
+        OBSIDIAN_BIN_PATH: "obsidian",
+        AUTH_ENABLED: false,
+        READ_ONLY: false,
+        AUDIT_LOG_ENABLED: false,
+        RATE_LIMIT_PER_MINUTE: 1000,
+        MAX_SEARCH_RESULTS: 50,
+        COMMAND_TIMEOUT_MS: 5000,
+        ENABLE_ADVANCED_CLI: false,
+        ENABLE_DESTRUCTIVE_TOOLS: true,
+        LOG_LEVEL: "info",
+      });
+
+      expect(vaultService.resolveVault("daily").name).toBe("obsidian-daily-update-report");
+      expect(vaultService.resolveVault("work").name).toBe("dharmik-professional-obsidian-vault");
+
+      // Verify reading notes via alias
+      const note = await vaultService.readNote("2026-11-01.md", false, "daily");
+      expect(note.content).toContain("Daily Standup");
+    });
+
+    it("should return recognized aliases in listVaults and getVault responses", async () => {
+      const service = new VaultService(
+        {
+          "dharmik-professional-obsidian-vault": proVaultDir,
+          "obsidian-daily-update-report": dailyVaultDir,
+        },
+        cliAdapter,
+        undefined,
+        "dharmik-professional-obsidian-vault"
+      );
+
+      const list = await service.listVaults();
+      const daily = list.vaults.find((v) => v.name === "obsidian-daily-update-report");
+      expect(daily).toBeDefined();
+      expect(daily?.aliases).toContain("daily");
+      expect(daily?.aliases).toContain("report");
+
+      const vaultDetails = await service.getVault("daily");
+      expect(vaultDetails.name).toBe("obsidian-daily-update-report");
+      expect(vaultDetails.aliases).toContain("daily");
+    });
+
+    it("should throw NOT_FOUND with available vaults and recognized aliases when unknown query is given", () => {
+      const service = new VaultService(
+        {
+          "dharmik-professional-obsidian-vault": proVaultDir,
+          "obsidian-daily-update-report": dailyVaultDir,
+        },
+        cliAdapter,
+        undefined,
+        "dharmik-professional-obsidian-vault"
+      );
+
+      expect(() => service.resolveVault("completely-unknown-vault")).toThrowError(/not found/i);
+    });
+  });
 });

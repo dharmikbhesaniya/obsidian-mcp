@@ -21,7 +21,8 @@ export function parseVaultsConfig(
   readOnlyVaultsInput?: string,
   vaultScopesInput?: string | Record<string, any>,
   autoDiscoverReadOnly: boolean = false,
-  enableAutoDiscovery: boolean = true
+  enableAutoDiscovery: boolean = true,
+  aliasesInput?: string | Record<string, string>
 ): {
   vaults: Record<string, string>;
   vaultDefinitions: Record<string, VaultDefinition>;
@@ -29,10 +30,46 @@ export function parseVaultsConfig(
   scanRoots: string[];
   autoDiscoverReadOnly: boolean;
   enableAutoDiscovery: boolean;
+  aliases: Record<string, string>;
 } {
   const vaults: Record<string, string> = {};
   const vaultDefinitions: Record<string, VaultDefinition> = {};
   const scanRoots: string[] = [];
+  const aliases: Record<string, string> = {};
+
+  if (aliasesInput) {
+    if (typeof aliasesInput === "object" && !Array.isArray(aliasesInput)) {
+      for (const [alias, target] of Object.entries(aliasesInput)) {
+        if (typeof target === "string" && target.trim()) {
+          aliases[alias.trim().toLowerCase()] = target.trim();
+        }
+      }
+    } else if (typeof aliasesInput === "string") {
+      const trimmed = aliasesInput.trim();
+      if (trimmed.startsWith("{")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === "string" && v.trim()) {
+              aliases[k.trim().toLowerCase()] = v.trim();
+            }
+          }
+        } catch {}
+      }
+      if (Object.keys(aliases).length === 0) {
+        for (const part of trimmed.split(",")) {
+          const eqIdx = part.indexOf("=");
+          if (eqIdx > 0) {
+            const a = part.substring(0, eqIdx).trim().toLowerCase();
+            const v = part.substring(eqIdx + 1).trim();
+            if (a && v) {
+              aliases[a] = v;
+            }
+          }
+        }
+      }
+    }
+  }
 
   const readOnlySet = new Set<string>();
   if (readOnlyVaultsInput) {
@@ -255,6 +292,7 @@ export function parseVaultsConfig(
     scanRoots,
     autoDiscoverReadOnly,
     enableAutoDiscovery,
+    aliases,
   };
 }
 
@@ -268,6 +306,7 @@ const ConfigSchema = z.object({
   // Vault configuration
   OBSIDIAN_VAULT_PATH: z.string().optional(),
   OBSIDIAN_VAULTS: z.union([z.record(z.any()), z.string()]).optional(),
+  OBSIDIAN_VAULT_ALIASES: z.union([z.record(z.string()), z.string()]).optional(),
   OBSIDIAN_DEFAULT_VAULT: z.string().optional(),
   OBSIDIAN_READ_ONLY_VAULTS: z.string().optional(),
   OBSIDIAN_VAULT_SCOPES: z.union([z.record(z.any()), z.string()]).optional(),

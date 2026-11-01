@@ -22,6 +22,7 @@ This server is accompanied by the official companion repository: [Universal Obsi
   - [Core Access Control Principles](#core-access-control-principles)
   - [Capability Scopes Matrix](#capability-scopes-matrix)
   - [Universal AI Client Protocol](#universal-ai-client-protocol)
+  - [Smart Alias Resolution & Ambiguity Protection](#smart-alias-resolution--ambiguity-protection)
   - [Multi-Client Integration Guide](#multi-client-integration-guide)
 - [Environment Variables & Configuration Reference](#environment-variables--configuration-reference)
   - [Environment Variables Overview](#environment-variables-overview)
@@ -255,6 +256,30 @@ When an AI assistant initializes or begins a query, it executes `obsidian_list_v
   ```
   This signals the AI assistant that the action was rejected by security policy, preventing repetitive mutation loops.
 
+### Smart Alias Resolution & Ambiguity Protection
+
+To provide natural collaboration without requiring manual configuration for every auto-discovered vault, the server features an intelligent alias resolution and ambiguity protection layer:
+
+1. **Automatic Colloquial Aliases**: When vault names are long (e.g., `dharmik-professional-obsidian-vault` and `obsidian-daily-update-report`), users naturally refer to them with conversational keywords (e.g., "daily", "daily vault", "daily update", "professional", or "dharmik"). The server tokenizes names, strips stop words (`obsidian`, `vault`, `notes`, `my`, `the`), and generates recognized alias combinations dynamically.
+2. **Explicit Custom Aliases**: Configured via `OBSIDIAN_VAULT_ALIASES` (e.g., `daily=obsidian-daily-update-report,work=dharmik-professional-obsidian-vault` or JSON format).
+3. **Ambiguity Protection (`AMBIGUOUS_VAULT`)**: If an input is ambiguous across multiple vaults (e.g. generic references like `"vault"` or `"obsidian"` matching multiple vaults), the server returns an `AMBIGUOUS_VAULT` error payload containing all matching candidates:
+   ```json
+   {
+     "error": {
+       "code": "AMBIGUOUS_VAULT",
+       "message": "Ambiguous vault reference 'obsidian'. Multiple vaults matched: [dharmik-professional-obsidian-vault, obsidian-daily-update-report]. Please specify the exact vault name or choose from the candidates.",
+       "details": {
+         "query": "obsidian",
+         "candidates": [
+           "dharmik-professional-obsidian-vault",
+           "obsidian-daily-update-report"
+         ]
+       }
+     }
+   }
+   ```
+   This error protocol informs the AI assistant (ChatGPT, Claude, Cursor) that multiple candidates exist, prompting the AI to request clarification from the user rather than guessing or modifying the wrong vault.
+
 ### Multi-Client Integration Guide
 
 The server supports all primary AI client environments with uniform access control:
@@ -327,6 +352,7 @@ The Obsidian MCP Server is configured entirely via environment variables (in you
 | :--- | :--- | :--- | :--- |
 | `OBSIDIAN_VAULT_PATH` | string | *None* | Absolute path to a single target vault or parent folder containing multiple auto-discovered vaults (e.g. `/vault`). Required unless `OBSIDIAN_VAULTS` is provided. |
 | `OBSIDIAN_VAULTS` | string / JSON | *None* | Multi-vault custom inventory. Accepts comma-separated `name=path:ro,name2=path2:rw` pairs or JSON with custom paths and permissions. Can be combined with `OBSIDIAN_VAULT_PATH`. |
+| `OBSIDIAN_VAULT_ALIASES` | string / JSON | *None* | Custom short aliases mapping colloquial names to full vault names (e.g. `daily=obsidian-daily-update-report,work=dharmik-professional-obsidian-vault` or JSON dictionary). |
 | `OBSIDIAN_DEFAULT_VAULT` | string | *First vault* | Name of the primary vault used when tool calls omit an explicit `vault` argument. |
 | `OBSIDIAN_ENABLE_AUTO_DISCOVERY` | boolean | `true` | When `true`, automatically discovers new sub-vaults containing `.obsidian` dynamically at runtime. |
 | `OBSIDIAN_AUTO_DISCOVER_READ_ONLY` | boolean | `false` | Default access mode for auto-discovered vaults. Set `true` to restrict dynamically detected vaults to read-only (`vault:read`), preventing write/delete actions. |

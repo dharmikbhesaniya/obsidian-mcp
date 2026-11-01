@@ -29,6 +29,71 @@ export function stripObsidianComments(content: string): string {
   return content.replace(/%%[\s\S]*?%%/g, "");
 }
 
+const STOP_WORDS = new Set([
+  "obsidian",
+  "vault",
+  "notes",
+  "my",
+  "the",
+  "root",
+  "repo",
+  "folder",
+  "workspace",
+]);
+
+export function generateVaultAliases(vaultName: string, customAliases?: Record<string, string>): string[] {
+  const aliases = new Set<string>();
+
+  aliases.add(vaultName.toLowerCase());
+  aliases.add(vaultName.toLowerCase().replace(/[-_]+/g, " "));
+
+  if (customAliases) {
+    for (const [alias, target] of Object.entries(customAliases)) {
+      if (target.toLowerCase() === vaultName.toLowerCase()) {
+        aliases.add(alias.toLowerCase());
+      }
+    }
+  }
+
+  const rawTokens = vaultName
+    .toLowerCase()
+    .split(/[-_ .]+/)
+    .filter(Boolean);
+
+  const meaningfulTokens = rawTokens.filter((t) => !STOP_WORDS.has(t));
+
+  if (meaningfulTokens.length > 0) {
+    for (const token of meaningfulTokens) {
+      if (token.length >= 3) {
+        aliases.add(token);
+        aliases.add(`${token}-vault`);
+        aliases.add(`${token} vault`);
+      }
+    }
+
+    if (meaningfulTokens.length >= 2) {
+      aliases.add(meaningfulTokens.join("-"));
+      aliases.add(meaningfulTokens.join(" "));
+      aliases.add(`${meaningfulTokens.join("-")}-vault`);
+      aliases.add(`${meaningfulTokens.join(" ")} vault`);
+      for (let i = 0; i < meaningfulTokens.length - 1; i++) {
+        aliases.add(`${meaningfulTokens[i]}-${meaningfulTokens[i + 1]}`);
+        aliases.add(`${meaningfulTokens[i]} ${meaningfulTokens[i + 1]}`);
+        aliases.add(`${meaningfulTokens[i]}-${meaningfulTokens[i + 1]}-vault`);
+        aliases.add(`${meaningfulTokens[i]} ${meaningfulTokens[i + 1]} vault`);
+      }
+    }
+  }
+
+  const stripped = rawTokens.filter((t) => t !== "obsidian" && t !== "vault").join("-");
+  if (stripped && stripped !== vaultName.toLowerCase()) {
+    aliases.add(stripped);
+    aliases.add(stripped.replace(/-/g, " "));
+  }
+
+  return Array.from(aliases);
+}
+
 export interface VaultInstance {
   name: string;
   root: string;
@@ -38,6 +103,7 @@ export interface VaultInstance {
   readOnly: boolean;
   scopes?: ScopeType[];
   isDynamicallyDiscovered?: boolean;
+  aliases: string[];
 }
 
 export class VaultService {
@@ -48,6 +114,7 @@ export class VaultService {
   private readonly vaultDefinitions: Record<string, VaultDefinition>;
   private readonly autoDiscoverReadOnly: boolean;
   private readonly enableAutoDiscovery: boolean;
+  private readonly customAliases: Record<string, string>;
 
   constructor(
     vaultsOrPathGuard: PathGuard | Record<string, any> | Map<string, any>,
@@ -57,12 +124,14 @@ export class VaultService {
     vaultDefinitions?: Record<string, VaultDefinition>,
     scanRoots?: string[],
     autoDiscoverReadOnly: boolean = false,
-    enableAutoDiscovery: boolean = true
+    enableAutoDiscovery: boolean = true,
+    aliases?: Record<string, string>
   ) {
     this.cliAdapter = cliAdapter;
     this.vaultDefinitions = vaultDefinitions || {};
     this.autoDiscoverReadOnly = Boolean(autoDiscoverReadOnly);
     this.enableAutoDiscovery = enableAutoDiscovery !== false;
+    this.customAliases = aliases || {};
 
     if (this.enableAutoDiscovery && scanRoots) {
       for (const r of scanRoots) {
@@ -87,6 +156,7 @@ export class VaultService {
         isDefault: true,
         readOnly: isReadOnly,
         scopes: def?.scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined),
+        aliases: generateVaultAliases(name, this.customAliases),
       };
       this.vaults.set(name, instance);
       if (name !== "default") {
@@ -140,6 +210,7 @@ export class VaultService {
           isDefault: isDef,
           readOnly: isReadOnly,
           scopes: scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined),
+          aliases: generateVaultAliases(name, this.customAliases),
         });
 
         if (this.enableAutoDiscovery) {
@@ -193,6 +264,8 @@ export class VaultService {
               const isReadOnly = def !== undefined ? Boolean(def.readOnly) : this.autoDiscoverReadOnly;
               const scopes = def?.scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined);
 
+              const aliases = generateVaultAliases(entry.name, this.customAliases);
+
               this.vaults.set(entry.name, {
                 name: entry.name,
                 root: candidatePath,
@@ -202,6 +275,7 @@ export class VaultService {
                 readOnly: isReadOnly,
                 scopes,
                 isDynamicallyDiscovered: true,
+                aliases,
               });
             }
           }
@@ -230,15 +304,31 @@ export class VaultService {
     }
 
     const trimmed = vaultName.trim();
-    let vault = this.vaults.get(trimmed);
-    if (!vault) {
-      // Trigger dynamic scan in case a new vault was recently added
-      this.scanDynamicVaults();
-      vault = this.vaults.get(trimmed);
+    const queryLower = trimmed.toLowerCase();
+
+    // 1. Direct name match
+    let vault = this.vaults.get(trimmed) || this.vaults.get(queryLower);
+    if (vault) return vault;
+
+    // 2. Explicit custom alias lookup (e.g. from OBSIDIAN_VAULT_ALIASES)
+    const customTarget = this.customAliases[queryLower];
+    if (customTarget) {
+      const targetVault = this.vaults.get(customTarget);
+      if (targetVault) return targetVault;
     }
 
-    // If still not found by direct name, check if a directory matching trimmed exists in any scan root
-    if (!vault && this.enableAutoDiscovery) {
+    // 3. Dynamic scan in case new vault directories were added to disk
+    this.scanDynamicVaults();
+    vault = this.vaults.get(trimmed) || this.vaults.get(queryLower);
+    if (vault) return vault;
+
+    if (customTarget) {
+      const targetVault = this.vaults.get(customTarget);
+      if (targetVault) return targetVault;
+    }
+
+    // 4. Check if directory matching trimmed exists in any scan root
+    if (this.enableAutoDiscovery) {
       for (const scanDir of this.scanRoots) {
         const candidate = path.resolve(path.join(scanDir, trimmed));
         if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
@@ -256,61 +346,145 @@ export class VaultService {
             readOnly: isReadOnly,
             scopes,
             isDynamicallyDiscovered: true,
+            aliases: generateVaultAliases(trimmed, this.customAliases),
           };
           this.vaults.set(trimmed, vault);
-          break;
+          return vault;
         }
       }
 
       // Check case-insensitive / normalized slug match across scanRoots
-      if (!vault) {
-        const targetSlug = trimmed.toLowerCase().replace(/[-_ ]+/g, "");
-        for (const scanDir of this.scanRoots) {
-          try {
-            if (!fs.existsSync(scanDir) || !fs.statSync(scanDir).isDirectory()) continue;
-            const entries = fs.readdirSync(scanDir, { withFileTypes: true });
-            for (const entry of entries) {
-              if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-              const entrySlug = entry.name.toLowerCase().replace(/[-_ ]+/g, "");
-              if (entrySlug === targetSlug) {
-                const candidate = path.resolve(path.join(scanDir, entry.name));
-                const pg = new PathGuard(candidate);
-                const tm = new TrashManager(candidate);
-                const def = this.vaultDefinitions?.[entry.name] || this.vaultDefinitions?.[trimmed];
-                const isReadOnly = def !== undefined ? Boolean(def.readOnly) : this.autoDiscoverReadOnly;
-                const scopes = def?.scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined);
-                vault = {
-                  name: entry.name,
-                  root: candidate,
-                  pathGuard: pg,
-                  trashManager: tm,
-                  isDefault: entry.name === this.defaultVaultName,
-                  readOnly: isReadOnly,
-                  scopes,
-                  isDynamicallyDiscovered: true,
-                };
-                this.vaults.set(entry.name, vault);
-                this.vaults.set(trimmed, vault);
-                break;
-              }
+      const targetSlug = queryLower.replace(/[-_ ]+/g, "");
+      for (const scanDir of this.scanRoots) {
+        try {
+          if (!fs.existsSync(scanDir) || !fs.statSync(scanDir).isDirectory()) continue;
+          const entries = fs.readdirSync(scanDir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+            const entrySlug = entry.name.toLowerCase().replace(/[-_ ]+/g, "");
+            if (entrySlug === targetSlug) {
+              const candidate = path.resolve(path.join(scanDir, entry.name));
+              const pg = new PathGuard(candidate);
+              const tm = new TrashManager(candidate);
+              const def = this.vaultDefinitions?.[entry.name] || this.vaultDefinitions?.[trimmed];
+              const isReadOnly = def !== undefined ? Boolean(def.readOnly) : this.autoDiscoverReadOnly;
+              const scopes = def?.scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined);
+              vault = {
+                name: entry.name,
+                root: candidate,
+                pathGuard: pg,
+                trashManager: tm,
+                isDefault: entry.name === this.defaultVaultName,
+                readOnly: isReadOnly,
+                scopes,
+                isDynamicallyDiscovered: true,
+                aliases: generateVaultAliases(entry.name, this.customAliases),
+              };
+              this.vaults.set(entry.name, vault);
+              this.vaults.set(trimmed, vault);
+              return vault;
             }
-          } catch {}
-          if (vault) break;
-        }
+          }
+        } catch {}
       }
     }
 
-    if (!vault) {
-      const available = Array.from(new Set(this.vaults.keys()))
-        .filter((k) => k !== "default")
-        .join(", ");
+    // 5. Smart Disambiguation & Alias / Keyword Matching
+    const distinctVaults = Array.from(this.vaults.values()).filter(
+      (v, idx, arr) => arr.findIndex((other) => other.name === v.name) === idx && v.name !== "default"
+    );
+
+    const queryNormalized = queryLower.replace(/[-_]+/g, " ").trim();
+    const querySlug = queryLower.replace(/[-_ ]+/g, "");
+    const queryTokens = queryLower.split(/[-_ .]+/).filter(Boolean);
+    const meaningfulQueryTokens = queryTokens.filter((t) => !STOP_WORDS.has(t));
+
+    // A. Check exact alias match
+    const aliasMatches = distinctVaults.filter((v) =>
+      v.aliases.some((a) => {
+        const aLower = a.toLowerCase();
+        return (
+          aLower === queryLower ||
+          aLower === queryNormalized ||
+          aLower.replace(/[-_ ]+/g, "") === querySlug
+        );
+      })
+    );
+
+    if (aliasMatches.length === 1) {
+      this.vaults.set(trimmed, aliasMatches[0]);
+      return aliasMatches[0];
+    } else if (aliasMatches.length > 1) {
+      const candidates = aliasMatches.map((v) => v.name);
       throw new ObsidianMcpError(
-        ErrorCode.NOT_FOUND,
-        `Vault '${trimmed}' not found. Available vaults: [${available}]`,
-        404
+        ErrorCode.AMBIGUOUS_VAULT,
+        `Ambiguous vault reference '${trimmed}'. Multiple vaults matched: [${candidates.join(", ")}]. Please specify the exact vault name or choose from the candidates.`,
+        400,
+        {
+          query: trimmed,
+          candidates,
+          availableVaults: distinctVaults.map((v) => ({ name: v.name, aliases: v.aliases })),
+        }
       );
     }
-    return vault;
+
+    // B. Token containment matching on meaningful tokens
+    if (meaningfulQueryTokens.length > 0) {
+      const tokenMatches = distinctVaults.filter((v) => {
+        const vTokens = v.name.toLowerCase().split(/[-_ .]+/).filter(Boolean);
+        return meaningfulQueryTokens.every(
+          (qt) =>
+            vTokens.some((vt) => vt === qt || vt.includes(qt)) ||
+            v.aliases.some((a) => a.toLowerCase().split(/[-_ .]+/).includes(qt))
+        );
+      });
+
+      if (tokenMatches.length === 1) {
+        this.vaults.set(trimmed, tokenMatches[0]);
+        return tokenMatches[0];
+      } else if (tokenMatches.length > 1) {
+        const candidates = tokenMatches.map((v) => v.name);
+        throw new ObsidianMcpError(
+          ErrorCode.AMBIGUOUS_VAULT,
+          `Ambiguous vault reference '${trimmed}'. Multiple vaults matched: [${candidates.join(", ")}]. Please specify the exact vault name or choose from the candidates.`,
+          400,
+          {
+            query: trimmed,
+            candidates,
+            availableVaults: distinctVaults.map((v) => ({ name: v.name, aliases: v.aliases })),
+          }
+        );
+      }
+    } else if (queryTokens.length > 0) {
+      // Query consists entirely of stop words (e.g. "vault", "obsidian", "my vault")
+      if (distinctVaults.length === 1) {
+        return distinctVaults[0];
+      }
+      const stopWordMatches = distinctVaults.filter((v) =>
+        queryTokens.some((qt) => v.name.toLowerCase().includes(qt))
+      );
+      const candidates = (stopWordMatches.length > 1 ? stopWordMatches : distinctVaults).map((v) => v.name);
+      throw new ObsidianMcpError(
+        ErrorCode.AMBIGUOUS_VAULT,
+        `Ambiguous vault reference '${trimmed}'. Multiple vaults matched: [${candidates.join(", ")}]. Please specify the exact vault name or choose from the candidates.`,
+        400,
+        {
+          query: trimmed,
+          candidates,
+          availableVaults: distinctVaults.map((v) => ({ name: v.name, aliases: v.aliases })),
+        }
+      );
+    }
+
+    // If no match found
+    const available = distinctVaults
+      .map((v) => `${v.name} (aliases: ${v.aliases.slice(0, 3).join(", ")})`)
+      .join("; ");
+    throw new ObsidianMcpError(
+      ErrorCode.NOT_FOUND,
+      `Vault '${trimmed}' not found. Available vaults: [${available || "none"}]`,
+      404
+    );
   }
 
   public get pathGuard(): PathGuard {
@@ -361,6 +535,7 @@ export class VaultService {
 
     const list: Array<{
       name: string;
+      aliases: string[];
       path: string;
       isDefault: boolean;
       totalFiles: number;
@@ -420,9 +595,13 @@ export class VaultService {
       }
 
       const accessMode = instance.readOnly ? "read-only" : "read/write";
+      const aliasPreview = instance.aliases && instance.aliases.length > 0
+        ? ` Recognized aliases: [${instance.aliases.slice(0, 4).join(", ")}].`
+        : "";
 
       list.push({
         name: instance.name,
+        aliases: instance.aliases || [],
         path: instance.root,
         isDefault: instance.name === this.defaultVaultName,
         totalFiles,
@@ -433,7 +612,7 @@ export class VaultService {
         accessMode,
         scopes: instance.scopes,
         status: "accessible",
-        summary: `Vault '${instance.name}' located at '${instance.root}' (${accessMode}, ${totalFiles} total files, ${markdownFiles} markdown notes across ${topLevelFolders.length} root folders).`,
+        summary: `Vault '${instance.name}' located at '${instance.root}' (${accessMode}, ${totalFiles} total files, ${markdownFiles} markdown notes across ${topLevelFolders.length} root folders).${aliasPreview}`,
       });
     }
 
@@ -498,10 +677,14 @@ export class VaultService {
 
     const cliReachable = await this.cliAdapter.checkReachability();
     const accessMode = vault.readOnly ? "read-only" : "read/write";
+    const aliasPreview = vault.aliases && vault.aliases.length > 0
+      ? ` Recognized aliases: [${vault.aliases.slice(0, 4).join(", ")}].`
+      : "";
 
     return {
       vaultId: vault.name,
       name: vault.name,
+      aliases: vault.aliases || [],
       path: root,
       isDefault: vault.name === this.defaultVaultName,
       status: cliReachable ? "connected" : "degraded",
@@ -514,7 +697,7 @@ export class VaultService {
       markdownFiles,
       totalFolders,
       topLevelFolders: topLevelFolders.sort(),
-      summary: `Vault '${vault.name}' at '${root}': ${accessMode}, ${totalFiles} files (${markdownFiles} markdown notes) in ${topLevelFolders.length} top-level folders.`,
+      summary: `Vault '${vault.name}' at '${root}': ${accessMode}, ${totalFiles} files (${markdownFiles} markdown notes) in ${topLevelFolders.length} top-level folders.${aliasPreview}`,
     };
   }
 

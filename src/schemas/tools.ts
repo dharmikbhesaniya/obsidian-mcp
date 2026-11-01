@@ -4,7 +4,9 @@ import { VaultRelativePathSchema } from "./common.js";
 export const VaultNameSchema = z
   .string()
   .optional()
-  .describe("Vault name when multiple vaults are configured (e.g. 'work' or 'personal'). Defaults to the active default vault.");
+  .describe(
+    "Vault name or recognized alias/keyword when multiple vaults are configured (e.g. 'work', 'daily', or full vault name). If ambiguous across vaults, server requests clarification."
+  );
 
 // Vault schemas
 export const ListVaultsSchema = z.object({});

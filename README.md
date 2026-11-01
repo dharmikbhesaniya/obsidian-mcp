@@ -27,6 +27,8 @@ This server is accompanied by the official companion repository: [Universal Obsi
 - [Environment Variables & Configuration Reference](#environment-variables--configuration-reference)
   - [Environment Variables Overview](#environment-variables-overview)
   - [Architectural Importance of Variables](#architectural-importance-of-variables)
+  - [Managing Variables Across Deployment Environments](#managing-variables-across-deployment-environments)
+  - [Access Management & Security Configuration Recipes](#access-management--security-configuration-recipes)
 - [Local Development Setup](#local-development-setup)
   - [Prerequisites](#prerequisites)
   - [Installation & Build](#installation--build)
@@ -389,6 +391,192 @@ The Obsidian MCP Server is configured entirely via environment variables (in you
    Scopes provide least-privilege access. An agent tasked with drafting daily logs can be assigned `vault:read,vault:write` without granting `vault:delete` (preventing note loss) or `vault:developer` (preventing CLI access).
 5. **Session Safety & Loop Prevention (`RATE_LIMIT_PER_MINUTE`)**  
    Autonomous AI agents occasionally enter repetitive retry loops. The sliding-window rate limiter prevents CPU exhaustion, excessive disk I/O, or Obsidian UI unresponsiveness.
+
+---
+
+### Managing Variables Across Deployment Environments
+
+The Obsidian MCP Server loads configuration from standard operating system environment variables, with native `.env` loading support via `dotenv`. Depending on the runtime platform, environment variables can be declared through configuration files, command-line arguments, container definitions, or service supervisors.
+
+#### 1. Standard `.env` File Configuration
+When executing directly with Node.js or developing locally, copy `.env.example` to `.env` in the server root. Variables declared in `.env` load automatically on startup:
+
+```ini
+# Vault Discovery and Permissions
+OBSIDIAN_VAULT_PATH=/srv/obsidian/vault
+OBSIDIAN_VAULTS=dharmik-professional-obsidian-vault=/vault/dharmik-professional-obsidian-vault:rw,obsidian-daily-update-report=/vault/obsidian-daily-update-report:rw
+OBSIDIAN_VAULT_ALIASES=daily=obsidian-daily-update-report,professional=dharmik-professional-obsidian-vault
+OBSIDIAN_DEFAULT_VAULT=dharmik-professional-obsidian-vault
+OBSIDIAN_AUTO_DISCOVERY_MODE=read/write
+
+# Transport and Network Binding
+MCP_TRANSPORT=http
+PORT=9435
+HOST=127.0.0.1
+
+# Security and Credentials
+AUTH_ENABLED=true
+AUTH_TOKEN=your-32-byte-hex-token
+```
+
+#### 2. Docker Run CLI Deployment
+When running via `docker run`, pass environment variables using individual `-e` flags or pass an environment file using `--env-file`:
+
+```bash
+docker run -d \
+  --name obsidian-mcp \
+  --restart unless-stopped \
+  -p 9435:9435 \
+  -e PORT=9435 \
+  -e AUTH_ENABLED=true \
+  -e AUTH_TOKEN="your-secure-token" \
+  -e OBSIDIAN_VAULT_PATH="/vault" \
+  -e OBSIDIAN_AUTO_DISCOVERY_MODE="read/write" \
+  -e OBSIDIAN_VAULT_ALIASES="daily=obsidian-daily-update-report,pro=dharmik-professional-obsidian-vault" \
+  -e OBSIDIAN_DEFAULT_VAULT="dharmik-professional-obsidian-vault" \
+  -v "/root/obsidian-vault:/vault" \
+  obsidian-remote-mcp:latest
+```
+
+#### 3. Docker Compose Deployment
+Docker Compose centralizes variable management by referencing local environment files or declaring inline key-value pairs in `docker-compose.yml`:
+
+```yaml
+services:
+  obsidian-mcp:
+    image: obsidian-remote-mcp:latest
+    container_name: obsidian-mcp
+    restart: unless-stopped
+    ports:
+      - "9435:9435"
+    environment:
+      PORT: 9435
+      AUTH_ENABLED: "true"
+      AUTH_TOKEN: "${AUTH_TOKEN}"
+      OBSIDIAN_VAULT_PATH: "/vault"
+      OBSIDIAN_AUTO_DISCOVERY_MODE: "read/write"
+      OBSIDIAN_VAULT_ALIASES: "daily=obsidian-daily-update-report,pro=dharmik-professional-obsidian-vault"
+      OBSIDIAN_DEFAULT_VAULT: "dharmik-professional-obsidian-vault"
+    volumes:
+      - /root/obsidian-vault:/vault
+```
+
+#### 4. Systemd Service Configuration (Linux VPS)
+For production Linux VPS deployments running directly on Ubuntu/Debian, store environment variables in a protected file such as `/etc/obsidian-mcp/.env` with `600` permissions and reference it via `EnvironmentFile`:
+
+```ini
+# /etc/systemd/system/obsidian-mcp.service
+[Unit]
+Description=Obsidian Remote MCP Server
+After=network.target obsidian-xvfb.service
+
+[Service]
+Type=simple
+User=obsidian
+Group=obsidian
+WorkingDirectory=/opt/obsidian-mcp
+EnvironmentFile=/etc/obsidian-mcp/.env
+ExecStart=/usr/bin/node /opt/obsidian-mcp/dist/index.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### 5. Local AI Desktop Clients (Claude Desktop & Cursor IDE)
+Desktop AI applications initialize the MCP server as a managed child process over `stdio`. Environment variables are declared inside the application's JSON configuration file:
+
+```json
+{
+  "mcpServers": {
+    "obsidian": {
+      "command": "node",
+      "args": ["/absolute/path/to/obsidian-mcp/dist/index.js"],
+      "env": {
+        "OBSIDIAN_VAULT_PATH": "/Users/dharmik/Documents/obsidian-vault",
+        "OBSIDIAN_VAULT_ALIASES": "daily=obsidian-daily-update-report,pro=dharmik-professional-obsidian-vault",
+        "OBSIDIAN_AUTO_DISCOVERY_MODE": "read/write",
+        "READ_ONLY": "false"
+      }
+    }
+  }
+}
+```
+
+---
+
+### Access Management & Security Configuration Recipes
+
+Access control in the Obsidian MCP Server operates on a dual-tier security model: filesystem boundary enforcement via `PathGuard` and semantic capability validation via scoped access tokens.
+
+#### Recipe 1: Granting Read-Only vs. Read/Write Access to Specific Vaults
+To allow an AI assistant to modify active project notes while strictly protecting personal records from alteration, assign the `:ro` (read-only) or `:rw` (read/write) suffix to each vault declaration:
+
+```bash
+# Syntax: name=path:mode
+OBSIDIAN_VAULTS="work=/vault/work-vault:rw,personal=/vault/personal-vault:ro"
+OBSIDIAN_DEFAULT_VAULT="work"
+```
+
+When an assistant executes `obsidian_create_note` or `obsidian_update_note` targeting `personal-vault`, the server halts the operation with a deterministic error:
+```json
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "Vault 'personal' is configured as read-only. Tool 'obsidian_create_note' requires scope 'vault:write', which is not permitted on this vault."
+  }
+}
+```
+
+#### Recipe 2: Safe Auto-Discovery for Enterprise Repositories
+When hosting multiple folders inside a parent directory (e.g. `/vault`), administrators can enable dynamic vault detection while locking newly discovered vaults into read-only mode by default:
+
+```bash
+OBSIDIAN_VAULT_PATH="/vault"
+OBSIDIAN_ENABLE_AUTO_DISCOVERY="true"
+OBSIDIAN_AUTO_DISCOVERY_MODE="read-only"
+OBSIDIAN_VAULTS="approved-editor=/vault/approved-editor:rw"
+```
+
+Under this configuration:
+- `approved-editor` retains authorized write permissions.
+- Any new vault created inside `/vault` is automatically discovered by AI clients without server restarts, but remains restricted to `vault:read` operations.
+
+#### Recipe 3: Dual Read/Write Setup with Natural Colloquial Aliases
+For environments where users frequently switch between long vault names (such as `dharmik-professional-obsidian-vault` and `obsidian-daily-update-report`), configure both repositories with full read/write access and short conversational aliases:
+
+```bash
+OBSIDIAN_VAULT_PATH="/vault"
+OBSIDIAN_AUTO_DISCOVERY_MODE="read/write"
+OBSIDIAN_VAULT_ALIASES="daily=obsidian-daily-update-report,pro=dharmik-professional-obsidian-vault,work=dharmik-professional-obsidian-vault"
+OBSIDIAN_DEFAULT_VAULT="dharmik-professional-obsidian-vault"
+```
+
+The user can prompt ChatGPT or Claude using natural terminology:
+- *"Add standup notes to my daily vault"* &rarr; routes directly to `obsidian-daily-update-report`.
+- *"Read my system architecture note in professional"* &rarr; routes directly to `dharmik-professional-obsidian-vault`.
+
+#### Recipe 4: Ambiguity Trapping Across Similar Vault Names
+When multiple vaults share common words (such as "vault" or "obsidian"), the server rejects ambiguous calls using `AMBIGUOUS_VAULT` rather than guessing a target:
+
+```json
+{
+  "error": {
+    "code": "AMBIGUOUS_VAULT",
+    "message": "Ambiguous vault reference 'vault'. Multiple vaults matched: [dharmik-professional-obsidian-vault, obsidian-daily-update-report]. Please specify the exact vault name or choose from the candidates.",
+    "details": {
+      "query": "vault",
+      "candidates": [
+        "dharmik-professional-obsidian-vault",
+        "obsidian-daily-update-report"
+      ]
+    }
+  }
+}
+```
+
+This response compels the AI client to stop execution and ask the user: *"Did you mean dharmik-professional-obsidian-vault or obsidian-daily-update-report?"*, ensuring data integrity across all connected systems.
 
 ---
 

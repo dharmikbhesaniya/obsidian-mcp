@@ -18,6 +18,11 @@ This server is accompanied by the official companion repository: [Universal Obsi
 - [System Architecture](#system-architecture)
 - [Feature & Capability Summary](#feature--capability-summary)
 - [Companion Agent Skills & Plugins Suite](#companion-agent-skills--plugins-suite)
+- [Access Control & Multi-Vault Architecture](#access-control--multi-vault-architecture)
+  - [Core Access Control Principles](#core-access-control-principles)
+  - [Capability Scopes Matrix](#capability-scopes-matrix)
+  - [Universal AI Client Protocol](#universal-ai-client-protocol)
+  - [Multi-Client Integration Guide](#multi-client-integration-guide)
 - [Environment Variables & Configuration Reference](#environment-variables--configuration-reference)
   - [Environment Variables Overview](#environment-variables-overview)
   - [Architectural Importance of Variables](#architectural-importance-of-variables)
@@ -155,6 +160,160 @@ For complete instruction sets, prompts, and IDE rule definitions that empower AI
 - **Cursor Rules & MDC**: Ready-to-copy `.cursorrules` and `.cursor/rules/obsidian.mdc` files.
 - **OpenAI & ChatGPT Tools**: Pre-built JSON function definitions ([function_tools.json](https://github.com/dharmikbhesaniya/obsidian-skill/tree/main/integrations/openai)).
 - **Complementary CLI & Markdown Skills**: Official Obsidian CLI commands, Obsidian Flavored Markdown (OFM), database Bases (`.base`), and JSON Canvas (`.canvas`) specifications.
+
+---
+
+## Access Control & Multi-Vault Architecture
+
+Access control in the Obsidian MCP Server is an enterprise authorization framework that isolates knowledge vaults, restricts filesystem operations, and provides deterministic multi-vault access across all AI clients and agent runtimes.
+
+The architecture eliminates directory escape vulnerabilities and guarantees that AI assistants operate strictly within authorized vaults.
+
+```mermaid
+flowchart TD
+    AI["AI Client (ChatGPT / Claude / Cursor / Antigravity)"]
+    Router["Multi-Vault Router & PathGuard"]
+    
+    subgraph Storage ["Mounted Storage"]
+        V1["Primary Vault (read/write)"]
+        V2["Personal Vault (read-only)"]
+        Auto["Auto-Discovered Vaults (Configured Default Mode)"]
+    end
+
+    AI -->|"1. obsidian_list_vaults"| Router
+    AI -->|"2. Tool Call { vault: 'name', ... }"| Router
+    Router -->|"Permitted (Scope Check Passed)"| V1
+    Router -->|"Permitted Read / Blocked Write (403)"| V2
+    Router -->|"Dynamic Detection on Query"| Auto
+```
+
+### Core Access Control Principles
+
+1. **Vault Sandboxing (`PathGuard`)**: Every registered vault possesses an isolated filesystem boundary. AI agents cannot traverse directories (`../`), escape to host filesystems, or follow external symlinks.
+2. **Granular Permissions (`read/write` vs. `read-only`)**: Vaults can be individually designated with full mutation rights or locked into immutable query-only modes.
+3. **Dynamic Zero-Downtime Auto-Discovery**: Placing a new folder containing `.obsidian` into the root vault directory registers the vault immediately without container restarts or configuration updates.
+4. **Safety Defaults for Unlisted Vaults**: When parent folders are scanned, unlisted vaults adopt the access mode specified by `OBSIDIAN_AUTO_DISCOVERY_MODE` (defaulting to safe `read-only` or agile `read/write`).
+
+### Capability Scopes Matrix
+
+| Tool Category | Required Scope | Permitted in Read-Only | Operations Included |
+| :--- | :--- | :--- | :--- |
+| **Search & Discovery** | `vault:read` | Yes | `obsidian_search`, `obsidian_search_context`, `obsidian_list_vaults`, `obsidian_get_vault` |
+| **Note Consumption** | `vault:read` | Yes | `obsidian_read_note`, `obsidian_list_files`, `obsidian_get_file_info`, `obsidian_read_daily_note` |
+| **Structure & Graph** | `vault:read` | Yes | `obsidian_get_outline`, `obsidian_get_backlinks`, `obsidian_get_tags`, `obsidian_list_tasks` |
+| **Content Mutation** | `vault:write` | **Blocked (403)** | `obsidian_create_note`, `obsidian_update_note`, `obsidian_patch_note`, `obsidian_append_note` |
+| **Metadata Editing** | `vault:write` | **Blocked (403)** | `obsidian_set_property`, `obsidian_remove_property`, `obsidian_toggle_task` |
+| **File Deletion** | `vault:delete` | **Blocked (403)** | `obsidian_delete_note`, `obsidian_move_note` (atomic trash preservation) |
+| **Desktop CLI** | `vault:developer` | **Blocked (403)** | Allowlisted CLI process executions via `obsidian_execute_command` |
+
+### Universal AI Client Protocol
+
+All AI clients operate through a standardized two-phase interaction lifecycle:
+
+#### Phase 1: Vault Inventory Discovery
+When an AI assistant initializes or begins a query, it executes `obsidian_list_vaults` to discover available vaults and their active permissions:
+
+```json
+{
+  "summary": "Found 2 configured vault(s): [work-vault, research-vault]. Active default vault: 'work-vault'.",
+  "defaultVault": "work-vault",
+  "totalVaults": 2,
+  "vaults": [
+    {
+      "name": "work-vault",
+      "path": "/vault/work-vault",
+      "accessMode": "read/write",
+      "readOnly": false,
+      "totalFiles": 1240,
+      "markdownFiles": 1180,
+      "topLevelFolders": ["Projects", "Meetings", "Roadmap"]
+    },
+    {
+      "name": "research-vault",
+      "path": "/vault/research-vault",
+      "accessMode": "read-only",
+      "readOnly": true,
+      "totalFiles": 450,
+      "markdownFiles": 430,
+      "topLevelFolders": ["Archive", "Papers", "Readings"]
+    }
+  ]
+}
+```
+
+#### Phase 2: Targeted Execution & Default Fallback
+- **Targeted Operations**: The AI client passes the `"vault"` parameter in any tool call (e.g., `obsidian_read_note({ "vault": "research-vault", "path": "Papers/Overview.md" })`).
+- **Default Fallback**: If the user or AI omits the `"vault"` argument, the server automatically routes the operation to `OBSIDIAN_DEFAULT_VAULT`.
+- **Deterministic 403 Rejection**: If an AI attempts to modify a read-only vault, the server responds with a clear `403 Forbidden` error payload:
+  ```json
+  {
+    "error": {
+      "code": "FORBIDDEN",
+      "message": "Tool 'obsidian_create_note' requires scope 'vault:write', but vault 'research-vault' is read-only or restricted to: [vault:read]"
+    }
+  }
+  ```
+  This signals the AI assistant that the action was rejected by security policy, preventing repetitive mutation loops.
+
+### Multi-Client Integration Guide
+
+The server supports all primary AI client environments with uniform access control:
+
+#### 1. ChatGPT (OpenAI Custom MCP Plugin)
+- In ChatGPT &rarr; **Plugins** &rarr; **Add custom MCP server**:
+  - **Server URL**: `https://<domain>/s/<token>/mcp`
+  - **Authentication**: `No authentication` (token is verified via the secret path)
+  - **Icon**: Use [icon-chatgpt-256.png](assets/icon-chatgpt-256.png) (256x256 PNG, 7.8 KB).
+
+#### 2. Claude Desktop & Claude Code
+- In `claude_desktop_config.json`:
+  ```json
+  {
+    "mcpServers": {
+      "obsidian": {
+        "url": "https://<domain>/mcp",
+        "headers": {
+          "Authorization": "Bearer <your_token>"
+        }
+      }
+    }
+  }
+  ```
+
+#### 3. Cursor & Windsurf IDE
+- In `.cursor/mcp.json`:
+  ```json
+  {
+    "mcpServers": {
+      "obsidian": {
+        "command": "node",
+        "args": ["/absolute/path/to/obsidian-mcp/dist/index.js"],
+        "env": {
+          "OBSIDIAN_VAULT_PATH": "/path/to/vault",
+          "OBSIDIAN_AUTO_DISCOVERY_MODE": "read-only"
+        }
+      }
+    }
+  }
+  ```
+
+#### 4. Google Antigravity & Gemini CLI
+- Declared in your agent configuration or loaded lazily:
+  ```json
+  {
+    "mcpServers": {
+      "obsidian": {
+        "url": "https://<domain>/mcp",
+        "headers": {
+          "Authorization": "Bearer <your_token>"
+        }
+      }
+    }
+  }
+  ```
+
+#### 5. Open-Source Clients (LibreChat, Cline, Continue.dev)
+- Connect using Streamable HTTP (`https://<domain>/mcp`) or Server-Sent Events (`https://<domain>/sse`) with standard Bearer authorization headers.
 
 ---
 
@@ -659,6 +818,61 @@ docker run -d \
   obsidian-remote-mcp
 ```
 
+### Docker Access Control Recipes
+
+#### Recipe 1: Hybrid Setup (Custom Read/Write Vault + Auto-Discovered Read-Only Default)
+Protects against unauthorized note mutations while granting write access to an approved primary vault:
+
+```bash
+docker run -d \
+  --name obsidian-mcp \
+  --restart unless-stopped \
+  -p 9435:9435 \
+  -e PORT=9435 \
+  -e AUTH_ENABLED=true \
+  -e AUTH_TOKEN=your-custom-secret-token \
+  -e OBSIDIAN_VAULTS="primary-vault=/vault/primary-vault:rw" \
+  -e OBSIDIAN_VAULT_PATH=/vault \
+  -e OBSIDIAN_AUTO_DISCOVERY_MODE="read-only" \
+  -e OBSIDIAN_DEFAULT_VAULT="primary-vault" \
+  -v "/root/obsidian-vault:/vault" \
+  obsidian-remote-mcp:latest
+```
+
+#### Recipe 2: Full Auto-Discovery with Read/Write Access
+Automatically discovers any folder containing `.obsidian` and allows AI clients full read and write access:
+
+```bash
+docker run -d \
+  --name obsidian-mcp \
+  --restart unless-stopped \
+  -p 9435:9435 \
+  -e PORT=9435 \
+  -e AUTH_ENABLED=true \
+  -e AUTH_TOKEN=your-custom-secret-token \
+  -e OBSIDIAN_VAULT_PATH=/vault \
+  -e OBSIDIAN_AUTO_DISCOVERY_MODE="read/write" \
+  -v "/root/obsidian-vault:/vault" \
+  obsidian-remote-mcp:latest
+```
+
+#### Recipe 3: Strict Static Vaults (Auto-Discovery Disabled)
+Permits access only to explicitly declared vaults, ignoring all other subfolders:
+
+```bash
+docker run -d \
+  --name obsidian-mcp \
+  --restart unless-stopped \
+  -p 9435:9435 \
+  -e PORT=9435 \
+  -e AUTH_ENABLED=true \
+  -e AUTH_TOKEN=your-custom-secret-token \
+  -e OBSIDIAN_VAULTS="work=/vault/work:rw,archive=/vault/archive:ro" \
+  -e OBSIDIAN_ENABLE_AUTO_DISCOVERY=false \
+  -v "/root/obsidian-vault:/vault" \
+  obsidian-remote-mcp:latest
+```
+
 ### Docker Compose Deployment
 
 Configure `.env` in the repository directory (defaults to port `9435`):
@@ -699,15 +913,22 @@ The server provides two HTTP transport modes:
 
 When connecting via **ChatGPT** &rarr; **Plugins** &rarr; **Add custom MCP server**:
 
-1. **Connection**: Select **`Server URL`**.
-2. **Server URL**: Enter your public HTTPS URL with your token appended:
+1. **Icon (optional)**: Click `+` and upload [assets/icon-chatgpt-256.png](assets/icon-chatgpt-256.png) (256 × 256 PNG, **7.8 KB**, fits within ChatGPT's 10 KB upload limit).
+2. **Name**: `Obsidian MCP`
+3. **Description**: `Enterprise integration providing direct access to Obsidian knowledge vaults, notes, metadata, and full-text search.`
+4. **Connection**: Select **`Server URL`**.
+5. **Server URL**: Enter your public HTTPS URL with the secret token path or query parameter:
    ```text
-   https://<your-domain-or-tunnel>/mcp?token=your-secret-token
-   ```
-3. **Authentication**: Select **`No authentication`** from the dropdown *(ChatGPT will pass the token in the URL directly to the server)*.
-4. Check **"I understand and want to continue"** and click **Create as a plugin**.
+   # Recommended: Secret path URL
+   https://<your-domain>/s/<your-secret-token>/mcp
 
-*(Note: If hosting locally on Docker, expose port 9435 using a tunnel like `ngrok http 9435` so ChatGPT's cloud servers can connect).*
+   # Alternative: Query parameter
+   https://<your-domain>/mcp?token=<your-secret-token>
+   ```
+6. **Authentication**: Select **`No authentication`** from the dropdown *(the token is cryptographically validated directly from the URL path)*.
+7. Check **"I understand and want to continue"** and click **Create as a plugin**.
+
+*(Note: If hosting locally on Docker, expose port 9435 using a tunnel like `ngrok http 9435` or Cloudflare Tunnel so ChatGPT's cloud servers can connect).*
 
 ### Connecting Remote Claude
 

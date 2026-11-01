@@ -174,7 +174,17 @@ export class VaultService {
           const obsidianDir = path.join(candidatePath, ".obsidian");
           const hasObsidian = fs.existsSync(obsidianDir) && fs.statSync(obsidianDir).isDirectory();
 
-          if (hasObsidian) {
+          let isVault = hasObsidian;
+          if (!isVault) {
+            try {
+              const subEntries = fs.readdirSync(candidatePath, { withFileTypes: true });
+              isVault = subEntries.some(
+                (s) => !s.name.startsWith(".") && (s.name.endsWith(".md") || s.isDirectory())
+              );
+            } catch {}
+          }
+
+          if (isVault) {
             const existing = this.vaults.get(entry.name);
             if (!existing) {
               const pg = new PathGuard(candidatePath);
@@ -249,6 +259,43 @@ export class VaultService {
           };
           this.vaults.set(trimmed, vault);
           break;
+        }
+      }
+
+      // Check case-insensitive / normalized slug match across scanRoots
+      if (!vault) {
+        const targetSlug = trimmed.toLowerCase().replace(/[-_ ]+/g, "");
+        for (const scanDir of this.scanRoots) {
+          try {
+            if (!fs.existsSync(scanDir) || !fs.statSync(scanDir).isDirectory()) continue;
+            const entries = fs.readdirSync(scanDir, { withFileTypes: true });
+            for (const entry of entries) {
+              if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+              const entrySlug = entry.name.toLowerCase().replace(/[-_ ]+/g, "");
+              if (entrySlug === targetSlug) {
+                const candidate = path.resolve(path.join(scanDir, entry.name));
+                const pg = new PathGuard(candidate);
+                const tm = new TrashManager(candidate);
+                const def = this.vaultDefinitions?.[entry.name] || this.vaultDefinitions?.[trimmed];
+                const isReadOnly = def !== undefined ? Boolean(def.readOnly) : this.autoDiscoverReadOnly;
+                const scopes = def?.scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined);
+                vault = {
+                  name: entry.name,
+                  root: candidate,
+                  pathGuard: pg,
+                  trashManager: tm,
+                  isDefault: entry.name === this.defaultVaultName,
+                  readOnly: isReadOnly,
+                  scopes,
+                  isDynamicallyDiscovered: true,
+                };
+                this.vaults.set(entry.name, vault);
+                this.vaults.set(trimmed, vault);
+                break;
+              }
+            }
+          } catch {}
+          if (vault) break;
         }
       }
     }
@@ -390,11 +437,23 @@ export class VaultService {
       });
     }
 
+    const scannedDirectories: Record<string, string[]> = {};
+    for (const scanDir of this.scanRoots) {
+      try {
+        if (fs.existsSync(scanDir) && fs.statSync(scanDir).isDirectory()) {
+          scannedDirectories[scanDir] = fs
+            .readdirSync(scanDir)
+            .filter((n) => !n.startsWith(".") && !["node_modules", "dist", "build", "coverage"].includes(n));
+        }
+      } catch {}
+    }
+
     const names = list.map((v) => v.name).join(", ");
     return {
       summary: `Found ${list.length} configured vault(s): [${names}]. Active default vault: '${this.defaultVaultName}'.`,
       defaultVault: this.defaultVaultName,
       totalVaults: list.length,
+      scannedDirectories,
       vaults: list,
     };
   }

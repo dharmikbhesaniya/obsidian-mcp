@@ -167,62 +167,74 @@ export function parseVaultsConfig(
   }
 
   if (vaultPath && vaultPath.trim()) {
-    const singleVaultPath = path.resolve(vaultPath.trim());
-    if (enableAutoDiscovery) {
-      scanRoots.push(singleVaultPath);
-    }
-    const vaultBase = path.basename(singleVaultPath) || "default";
+    const rawPaths = vaultPath.split(",").map((s) => s.trim()).filter(Boolean);
+    for (const rawP of rawPaths) {
+      const singleVaultPath = path.resolve(rawP);
+      if (enableAutoDiscovery) {
+        scanRoots.push(singleVaultPath);
+      }
+      const vaultBase = path.basename(singleVaultPath) || "default";
 
-    // Auto-discover sub-vaults if this is a parent directory containing multiple vaults
-    let discoveredSubVaults: string[] = [];
-    if (enableAutoDiscovery) {
-      try {
-        if (fs.existsSync(singleVaultPath) && fs.statSync(singleVaultPath).isDirectory()) {
-          const entries = fs.readdirSync(singleVaultPath, { withFileTypes: true });
-          for (const entry of entries) {
-            if (entry.isDirectory() && !entry.name.startsWith(".")) {
-              const subObsidian = path.join(singleVaultPath, entry.name, ".obsidian");
-              if (fs.existsSync(subObsidian) && fs.statSync(subObsidian).isDirectory()) {
-                discoveredSubVaults.push(entry.name);
+      // Auto-discover sub-vaults if this is a parent directory containing multiple vaults
+      let discoveredSubVaults: string[] = [];
+      if (enableAutoDiscovery) {
+        try {
+          if (fs.existsSync(singleVaultPath) && fs.statSync(singleVaultPath).isDirectory()) {
+            const entries = fs.readdirSync(singleVaultPath, { withFileTypes: true });
+            for (const entry of entries) {
+              if (entry.isDirectory() && !entry.name.startsWith(".")) {
+                if (["node_modules", "dist", "build", "coverage", ".git", ".obsidian-mcp"].includes(entry.name)) continue;
+                const candPath = path.join(singleVaultPath, entry.name);
+                const subObsidian = path.join(candPath, ".obsidian");
+                let isVault = fs.existsSync(subObsidian) && fs.statSync(subObsidian).isDirectory();
+                if (!isVault) {
+                  try {
+                    const subEntries = fs.readdirSync(candPath, { withFileTypes: true });
+                    isVault = subEntries.some((s) => !s.name.startsWith(".") && (s.name.endsWith(".md") || s.isDirectory()));
+                  } catch {}
+                }
+                if (isVault) {
+                  discoveredSubVaults.push(entry.name);
+                }
               }
             }
           }
+        } catch {
+          // If filesystem check fails, proceed with single vault path
         }
-      } catch {
-        // If filesystem check fails, proceed with single vault path
       }
-    }
 
-    if (discoveredSubVaults.length > 0) {
-      for (const subName of discoveredSubVaults) {
-        if (!vaults[subName]) {
-          const subPath = path.join(singleVaultPath, subName);
-          const def = parsePathAndMode(subName, {
-            path: subPath,
-            readOnly: autoDiscoverReadOnly,
-          });
-          vaults[subName] = def.path;
-          vaultDefinitions[subName] = def;
+      if (discoveredSubVaults.length > 0) {
+        for (const subName of discoveredSubVaults) {
+          if (!vaults[subName]) {
+            const subPath = path.join(singleVaultPath, subName);
+            const def = parsePathAndMode(subName, {
+              path: subPath,
+              readOnly: autoDiscoverReadOnly,
+            });
+            vaults[subName] = def.path;
+            vaultDefinitions[subName] = def;
+          }
         }
+      } else if (Object.keys(vaults).length === 0) {
+        const def = parsePathAndMode(vaultBase, {
+          path: singleVaultPath,
+          readOnly: autoDiscoverReadOnly,
+        });
+        vaults[vaultBase] = def.path;
+        vaultDefinitions[vaultBase] = def;
+      } else if (!vaults[vaultBase] && !vaults["default"]) {
+        try {
+          if (fs.existsSync(path.join(singleVaultPath, ".obsidian"))) {
+            const def = parsePathAndMode(vaultBase, {
+              path: singleVaultPath,
+              readOnly: autoDiscoverReadOnly,
+            });
+            vaults[vaultBase] = def.path;
+            vaultDefinitions[vaultBase] = def;
+          }
+        } catch {}
       }
-    } else if (Object.keys(vaults).length === 0) {
-      const def = parsePathAndMode(vaultBase, {
-        path: singleVaultPath,
-        readOnly: autoDiscoverReadOnly,
-      });
-      vaults[vaultBase] = def.path;
-      vaultDefinitions[vaultBase] = def;
-    } else if (!vaults[vaultBase] && !vaults["default"]) {
-      try {
-        if (fs.existsSync(path.join(singleVaultPath, ".obsidian"))) {
-          const def = parsePathAndMode(vaultBase, {
-            path: singleVaultPath,
-            readOnly: autoDiscoverReadOnly,
-          });
-          vaults[vaultBase] = def.path;
-          vaultDefinitions[vaultBase] = def;
-        }
-      } catch {}
     }
   }
 

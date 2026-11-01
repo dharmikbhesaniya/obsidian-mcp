@@ -46,6 +46,8 @@ export class VaultService {
   private readonly cliAdapter: ObsidianCliAdapter;
   private readonly scanRoots: Set<string> = new Set();
   private readonly vaultDefinitions: Record<string, VaultDefinition>;
+  private readonly autoDiscoverReadOnly: boolean;
+  private readonly enableAutoDiscovery: boolean;
 
   constructor(
     vaultsOrPathGuard: PathGuard | Record<string, any> | Map<string, any>,
@@ -53,12 +55,16 @@ export class VaultService {
     trashManager?: TrashManager,
     defaultVault?: string,
     vaultDefinitions?: Record<string, VaultDefinition>,
-    scanRoots?: string[]
+    scanRoots?: string[],
+    autoDiscoverReadOnly: boolean = false,
+    enableAutoDiscovery: boolean = true
   ) {
     this.cliAdapter = cliAdapter;
     this.vaultDefinitions = vaultDefinitions || {};
+    this.autoDiscoverReadOnly = Boolean(autoDiscoverReadOnly);
+    this.enableAutoDiscovery = enableAutoDiscovery !== false;
 
-    if (scanRoots) {
+    if (this.enableAutoDiscovery && scanRoots) {
       for (const r of scanRoots) {
         if (r && fs.existsSync(r)) {
           this.scanRoots.add(path.resolve(r));
@@ -86,9 +92,11 @@ export class VaultService {
       if (name !== "default") {
         this.vaults.set("default", instance);
       }
-      const parent = path.dirname(root);
-      if (parent && parent !== "/" && parent !== root && fs.existsSync(parent)) {
-        this.scanRoots.add(parent);
+      if (this.enableAutoDiscovery) {
+        const parent = path.dirname(root);
+        if (parent && parent !== "/" && parent !== root && fs.existsSync(parent)) {
+          this.scanRoots.add(parent);
+        }
       }
     } else {
       const entries =
@@ -134,9 +142,11 @@ export class VaultService {
           scopes: scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined),
         });
 
-        const parent = path.dirname(resolvedPath);
-        if (parent && parent !== "/" && parent !== resolvedPath && fs.existsSync(parent)) {
-          this.scanRoots.add(parent);
+        if (this.enableAutoDiscovery) {
+          const parent = path.dirname(resolvedPath);
+          if (parent && parent !== "/" && parent !== resolvedPath && fs.existsSync(parent)) {
+            this.scanRoots.add(parent);
+          }
         }
       }
 
@@ -147,6 +157,8 @@ export class VaultService {
   }
 
   public scanDynamicVaults(): void {
+    if (!this.enableAutoDiscovery) return;
+
     for (const scanDir of this.scanRoots) {
       try {
         if (!fs.existsSync(scanDir)) continue;
@@ -168,7 +180,8 @@ export class VaultService {
               const pg = new PathGuard(candidatePath);
               const tm = new TrashManager(candidatePath);
               const def = this.vaultDefinitions?.[entry.name];
-              const isReadOnly = def?.readOnly ?? false;
+              const isReadOnly = def !== undefined ? Boolean(def.readOnly) : this.autoDiscoverReadOnly;
+              const scopes = def?.scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined);
 
               this.vaults.set(entry.name, {
                 name: entry.name,
@@ -177,7 +190,7 @@ export class VaultService {
                 trashManager: tm,
                 isDefault: entry.name === this.defaultVaultName,
                 readOnly: isReadOnly,
-                scopes: def?.scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined),
+                scopes,
                 isDynamicallyDiscovered: true,
               });
             }
@@ -215,14 +228,15 @@ export class VaultService {
     }
 
     // If still not found by direct name, check if a directory matching trimmed exists in any scan root
-    if (!vault) {
+    if (!vault && this.enableAutoDiscovery) {
       for (const scanDir of this.scanRoots) {
         const candidate = path.resolve(path.join(scanDir, trimmed));
         if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
           const pg = new PathGuard(candidate);
           const tm = new TrashManager(candidate);
           const def = this.vaultDefinitions?.[trimmed];
-          const isReadOnly = def?.readOnly ?? false;
+          const isReadOnly = def !== undefined ? Boolean(def.readOnly) : this.autoDiscoverReadOnly;
+          const scopes = def?.scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined);
           vault = {
             name: trimmed,
             root: candidate,
@@ -230,7 +244,7 @@ export class VaultService {
             trashManager: tm,
             isDefault: trimmed === this.defaultVaultName,
             readOnly: isReadOnly,
-            scopes: def?.scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined),
+            scopes,
             isDynamicallyDiscovered: true,
           };
           this.vaults.set(trimmed, vault);

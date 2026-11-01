@@ -166,10 +166,13 @@ The Obsidian MCP Server is configured entirely via environment variables (in you
 
 | Variable | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `OBSIDIAN_VAULT_PATH` | string | *None* | Absolute path to a single target vault (e.g. `/Users/name/Vault`). Required unless `OBSIDIAN_VAULTS` is provided. |
-| `OBSIDIAN_VAULTS` | string / JSON | *None* | Multi-vault inventory. Accepts comma-separated `name=path:ro,name2=path2:rw` pairs or JSON with per-vault options. |
+| `OBSIDIAN_VAULT_PATH` | string | *None* | Absolute path to a single target vault or parent folder containing multiple auto-discovered vaults (e.g. `/vault`). Required unless `OBSIDIAN_VAULTS` is provided. |
+| `OBSIDIAN_VAULTS` | string / JSON | *None* | Multi-vault custom inventory. Accepts comma-separated `name=path:ro,name2=path2:rw` pairs or JSON with custom paths and permissions. Can be combined with `OBSIDIAN_VAULT_PATH`. |
 | `OBSIDIAN_DEFAULT_VAULT` | string | *First vault* | Name of the primary vault used when tool calls omit an explicit `vault` argument. |
-| `OBSIDIAN_READ_ONLY_VAULTS` | string | *None* | Comma-separated list of vault names to lock as read-only (e.g. `personal,archive`). |
+| `OBSIDIAN_ENABLE_AUTO_DISCOVERY` | boolean | `true` | When `true`, automatically discovers new sub-vaults containing `.obsidian` dynamically at runtime. |
+| `OBSIDIAN_AUTO_DISCOVER_READ_ONLY` | boolean | `false` | Default access mode for auto-discovered vaults. Set `true` to restrict dynamically detected vaults to read-only (`vault:read`), preventing write/delete actions. |
+| `OBSIDIAN_AUTO_DISCOVERY_MODE` | enum | `read/write` | Access mode for auto-discovered vaults: `read-only` (or `ro`) vs `read/write` (or `rw`). |
+| `OBSIDIAN_READ_ONLY_VAULTS` | string | *None* | Comma-separated list of custom vault names to lock as read-only (e.g. `personal,archive`). |
 | `OBSIDIAN_VAULT_SCOPES` | string / JSON | *None* | Per-vault scopes (e.g. `personal=vault:read;work=vault:read,vault:write`). |
 | `OBSIDIAN_BIN_PATH` | string | `obsidian` | System path to the official Obsidian desktop binary (e.g. `/usr/bin/obsidian` or `/Applications/Obsidian.app/Contents/MacOS/Obsidian`). |
 | `AUTH_ENABLED` | boolean | `false` | Enables cryptographic credential checks. Required (`true`) for production HTTP transport. |
@@ -332,6 +335,30 @@ Use this setup if you want a single AI assistant connected to multiple vaults, b
   }
 }
 ```
+
+##### Syntax C: Hybrid Custom Vaults + Dynamic Auto-Discovery
+```json
+{
+  "mcpServers": {
+    "obsidian": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/obsidian-mcp/dist/index.js"
+      ],
+      "env": {
+        "OBSIDIAN_VAULTS": "vip-client=/custom/external/path:rw",
+        "OBSIDIAN_VAULT_PATH": "/Users/yourusername/Documents/obsidian-vault",
+        "OBSIDIAN_AUTO_DISCOVER_READ_ONLY": "true",
+        "OBSIDIAN_DEFAULT_VAULT": "vip-client"
+      }
+    }
+  }
+}
+```
+*How it works*:
+- `vip-client` is explicitly added with custom path and read/write privileges.
+- Any vault inside `/Users/yourusername/Documents/obsidian-vault` is auto-discovered dynamically.
+- `OBSIDIAN_AUTO_DISCOVER_READ_ONLY: true` ensures all dynamically discovered vaults default to read-only access, while `vip-client` retains full write access.
 
 *How it works*:
 - The AI discovers both vaults via `obsidian_list_vaults`, which explicitly reports `readOnly: true` for `personal` and `readOnly: false` for `work`.

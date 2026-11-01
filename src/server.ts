@@ -15,12 +15,19 @@ export function createMcpServer(config: AppConfig, getAuthContext?: () => AuthCo
     version: "1.0.0",
   });
 
+  const autoDiscoverReadOnly = Boolean(
+    config.OBSIDIAN_AUTO_DISCOVER_READ_ONLY ||
+    config.OBSIDIAN_AUTO_DISCOVERY_MODE === "read-only"
+  );
+
   const parsed = parseVaultsConfig(
     config.OBSIDIAN_VAULT_PATH,
     config.OBSIDIAN_VAULTS,
     config.OBSIDIAN_DEFAULT_VAULT,
     config.OBSIDIAN_READ_ONLY_VAULTS,
-    config.OBSIDIAN_VAULT_SCOPES
+    config.OBSIDIAN_VAULT_SCOPES,
+    autoDiscoverReadOnly,
+    config.OBSIDIAN_ENABLE_AUTO_DISCOVERY
   );
   const cliAdapter = new ObsidianCliAdapter(config.OBSIDIAN_BIN_PATH, config.COMMAND_TIMEOUT_MS);
   const vaultService = new VaultService(
@@ -29,7 +36,9 @@ export function createMcpServer(config: AppConfig, getAuthContext?: () => AuthCo
     undefined,
     parsed.defaultVault,
     parsed.vaultDefinitions,
-    parsed.scanRoots
+    parsed.scanRoots,
+    autoDiscoverReadOnly,
+    config.OBSIDIAN_ENABLE_AUTO_DISCOVERY
   );
   const authManager = new AuthManager(config);
   const rateLimiter = new RateLimiter(config.RATE_LIMIT_PER_MINUTE);

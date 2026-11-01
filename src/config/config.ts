@@ -19,12 +19,16 @@ export function parseVaultsConfig(
   vaultsInput?: string | Record<string, any>,
   defaultVaultInput?: string,
   readOnlyVaultsInput?: string,
-  vaultScopesInput?: string | Record<string, any>
+  vaultScopesInput?: string | Record<string, any>,
+  autoDiscoverReadOnly: boolean = false,
+  enableAutoDiscovery: boolean = true
 ): {
   vaults: Record<string, string>;
   vaultDefinitions: Record<string, VaultDefinition>;
   defaultVault: string;
   scanRoots: string[];
+  autoDiscoverReadOnly: boolean;
+  enableAutoDiscovery: boolean;
 } {
   const vaults: Record<string, string> = {};
   const vaultDefinitions: Record<string, VaultDefinition> = {};
@@ -164,12 +168,14 @@ export function parseVaultsConfig(
 
   if (vaultPath && vaultPath.trim()) {
     const singleVaultPath = path.resolve(vaultPath.trim());
-    scanRoots.push(singleVaultPath);
+    if (enableAutoDiscovery) {
+      scanRoots.push(singleVaultPath);
+    }
     const vaultBase = path.basename(singleVaultPath) || "default";
 
     // Auto-discover sub-vaults if this is a parent directory containing multiple vaults
-    if (Object.keys(vaults).length === 0) {
-      let discoveredSubVaults: string[] = [];
+    let discoveredSubVaults: string[] = [];
+    if (enableAutoDiscovery) {
       try {
         if (fs.existsSync(singleVaultPath) && fs.statSync(singleVaultPath).isDirectory()) {
           const entries = fs.readdirSync(singleVaultPath, { withFileTypes: true });
@@ -185,23 +191,38 @@ export function parseVaultsConfig(
       } catch {
         // If filesystem check fails, proceed with single vault path
       }
+    }
 
-      if (discoveredSubVaults.length > 0) {
-        for (const subName of discoveredSubVaults) {
+    if (discoveredSubVaults.length > 0) {
+      for (const subName of discoveredSubVaults) {
+        if (!vaults[subName]) {
           const subPath = path.join(singleVaultPath, subName);
-          const def = parsePathAndMode(subName, subPath);
+          const def = parsePathAndMode(subName, {
+            path: subPath,
+            readOnly: autoDiscoverReadOnly,
+          });
           vaults[subName] = def.path;
           vaultDefinitions[subName] = def;
         }
-      } else {
-        const def = parsePathAndMode(vaultBase, singleVaultPath);
-        vaults[vaultBase] = def.path;
-        vaultDefinitions[vaultBase] = def;
       }
+    } else if (Object.keys(vaults).length === 0) {
+      const def = parsePathAndMode(vaultBase, {
+        path: singleVaultPath,
+        readOnly: autoDiscoverReadOnly,
+      });
+      vaults[vaultBase] = def.path;
+      vaultDefinitions[vaultBase] = def;
     } else if (!vaults[vaultBase] && !vaults["default"]) {
-      const def = parsePathAndMode(vaultBase, singleVaultPath);
-      vaults["default"] = def.path;
-      vaultDefinitions["default"] = { ...def, name: "default" };
+      try {
+        if (fs.existsSync(path.join(singleVaultPath, ".obsidian"))) {
+          const def = parsePathAndMode(vaultBase, {
+            path: singleVaultPath,
+            readOnly: autoDiscoverReadOnly,
+          });
+          vaults[vaultBase] = def.path;
+          vaultDefinitions[vaultBase] = def;
+        }
+      } catch {}
     }
   }
 
@@ -215,7 +236,14 @@ export function parseVaultsConfig(
     defaultVault = vaults["default"] ? "default" : vaultNames[0];
   }
 
-  return { vaults, vaultDefinitions, defaultVault, scanRoots };
+  return {
+    vaults,
+    vaultDefinitions,
+    defaultVault,
+    scanRoots,
+    autoDiscoverReadOnly,
+    enableAutoDiscovery,
+  };
 }
 
 const ConfigSchema = z.object({
@@ -232,6 +260,24 @@ const ConfigSchema = z.object({
   OBSIDIAN_READ_ONLY_VAULTS: z.string().optional(),
   OBSIDIAN_VAULT_SCOPES: z.union([z.record(z.any()), z.string()]).optional(),
   OBSIDIAN_BIN_PATH: z.string().default("obsidian"),
+
+  // Dynamic Auto-discovery configuration
+  OBSIDIAN_ENABLE_AUTO_DISCOVERY: z
+    .union([z.boolean(), z.string().transform((val) => val === "true" || val === "1")])
+    .default(true),
+  OBSIDIAN_AUTO_DISCOVER_READ_ONLY: z
+    .union([z.boolean(), z.string().transform((val) => val === "true" || val === "1")])
+    .default(false),
+  OBSIDIAN_AUTO_DISCOVERY_MODE: z
+    .string()
+    .optional()
+    .transform((val) => {
+      if (!val) return undefined;
+      const lower = val.toLowerCase().trim();
+      if (lower === "read-only" || lower === "ro") return "read-only" as const;
+      if (lower === "read/write" || lower === "read-write" || lower === "rw") return "read/write" as const;
+      return undefined;
+    }),
 
   // Security
   AUTH_ENABLED: z

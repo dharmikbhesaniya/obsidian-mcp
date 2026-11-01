@@ -443,5 +443,81 @@ describe("Multi-Vault Architecture & Isolation", () => {
       expect(afterDeleteList.totalVaults).toBe(2);
       expect(afterDeleteList.vaults.find((v) => v.name === "research-vault")).toBeUndefined();
     });
+
+    it("should support both custom vaults and auto-discovered vaults simultaneously", () => {
+      fs.mkdirSync(path.join(personalVaultDir, ".obsidian"), { recursive: true });
+      fs.mkdirSync(path.join(workVaultDir, ".obsidian"), { recursive: true });
+
+      const customDir = path.join(tempBaseDir, "custom-external");
+      fs.mkdirSync(customDir, { recursive: true });
+
+      const parsed = parseVaultsConfig(
+        tempBaseDir,
+        `custom=${customDir}:rw`,
+        "custom"
+      );
+
+      // Should contain both the custom vault and the two auto-discovered vaults in tempBaseDir
+      expect(parsed.vaults["custom"]).toBe(customDir);
+      expect(parsed.vaults["personal-vault"]).toBe(personalVaultDir);
+      expect(parsed.vaults["work-vault"]).toBe(workVaultDir);
+      expect(parsed.defaultVault).toBe("custom");
+    });
+
+    it("should enforce read-only on auto-discovered vaults while preserving custom read-write vaults", async () => {
+      fs.mkdirSync(path.join(personalVaultDir, ".obsidian"), { recursive: true });
+      fs.mkdirSync(path.join(workVaultDir, ".obsidian"), { recursive: true });
+
+      const customDir = path.join(tempBaseDir, "custom-write-vault");
+      fs.mkdirSync(customDir, { recursive: true });
+      fs.writeFileSync(path.join(customDir, "Task.md"), "# Task\nWrite me.");
+
+      const { vaultService } = createMcpServer({
+        NODE_ENV: "test",
+        MCP_TRANSPORT: "stdio",
+        PORT: 3000,
+        HOST: "127.0.0.1",
+        OBSIDIAN_VAULT_PATH: tempBaseDir,
+        OBSIDIAN_VAULTS: `custom=${customDir}:rw`,
+        OBSIDIAN_DEFAULT_VAULT: "custom",
+        OBSIDIAN_AUTO_DISCOVER_READ_ONLY: true,
+        OBSIDIAN_BIN_PATH: "obsidian",
+        AUTH_ENABLED: false,
+        READ_ONLY: false,
+        AUDIT_LOG_ENABLED: false,
+        RATE_LIMIT_PER_MINUTE: 1000,
+        MAX_SEARCH_RESULTS: 50,
+        COMMAND_TIMEOUT_MS: 5000,
+        ENABLE_ADVANCED_CLI: false,
+        ENABLE_DESTRUCTIVE_TOOLS: true,
+        LOG_LEVEL: "info",
+      });
+
+      const list = await vaultService.listVaults();
+      const customVault = list.vaults.find((v) => v.name === "custom");
+      const autoVault = list.vaults.find((v) => v.name === "personal-vault");
+
+      expect(customVault).toBeDefined();
+      expect(customVault?.readOnly).toBe(false);
+      expect(customVault?.accessMode).toBe("read/write");
+
+      expect(autoVault).toBeDefined();
+      expect(autoVault?.readOnly).toBe(true);
+      expect(autoVault?.accessMode).toBe("read-only");
+
+      // Verify custom vault allows note creation
+      await expect(
+        vaultService.createNote("NewNote.md", "# Success", undefined, false, undefined, "custom")
+      ).resolves.toBeDefined();
+
+      // Verify auto-discovered vault blocks note mutation
+      expect(() =>
+        vaultService.enforceVaultScope("personal-vault", Scope.VAULT_WRITE, "obsidian_create_note")
+      ).toThrowError(/read-only/);
+
+      // Verify auto-discovered vault allows note reading
+      const readRes = await vaultService.readNote("Journal.md", false, "personal-vault");
+      expect(readRes.content).toContain("Personal Journal");
+    });
   });
 });

@@ -371,10 +371,11 @@ function importCryptoTokenHash(token: string): string {
 }
 
 export type AppConfig = z.infer<typeof ConfigSchema>;
+export type AppConfigInput = z.input<typeof ConfigSchema>;
 
 let cachedConfig: AppConfig | null = null;
 
-export function loadConfig(overrides?: Partial<AppConfig>): AppConfig {
+export function loadConfig(overrides?: Partial<AppConfigInput> | Partial<AppConfig>): AppConfig {
   if (overrides) {
     return ConfigSchema.parse({
       ...process.env,

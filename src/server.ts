@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { AppConfig, parseVaultsConfig } from "./config/config.js";
+import { AppConfig, AppConfigInput, loadConfig, parseVaultsConfig } from "./config/config.js";
 import { AuthManager, AuthContext } from "./security/auth.js";
 import { RateLimiter } from "./security/rate-limit.js";
 import { AuditLogger } from "./security/audit.js";
@@ -9,7 +9,19 @@ import { registerTools } from "./tools/index.js";
 import { registerResources } from "./resources/index.js";
 import { registerPrompts } from "./prompts/index.js";
 
-export function createMcpServer(config: AppConfig, getAuthContext?: () => AuthContext) {
+export function createMcpServer(
+  configInput: AppConfig | Partial<AppConfigInput> | Partial<AppConfig>,
+  getAuthContext?: () => AuthContext
+) {
+  const config: AppConfig =
+    typeof configInput === "object" &&
+    configInput !== null &&
+    "OBSIDIAN_ENABLE_AUTO_DISCOVERY" in configInput &&
+    "OBSIDIAN_AUTO_DISCOVER_READ_ONLY" in configInput &&
+    "PORT" in configInput
+      ? (configInput as AppConfig)
+      : loadConfig(configInput as Partial<AppConfigInput>);
+
   const server = new McpServer({
     name: "obsidian-mcp",
     version: "1.0.0",

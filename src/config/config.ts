@@ -24,9 +24,11 @@ export function parseVaultsConfig(
   vaults: Record<string, string>;
   vaultDefinitions: Record<string, VaultDefinition>;
   defaultVault: string;
+  scanRoots: string[];
 } {
   const vaults: Record<string, string> = {};
   const vaultDefinitions: Record<string, VaultDefinition> = {};
+  const scanRoots: string[] = [];
 
   const readOnlySet = new Set<string>();
   if (readOnlyVaultsInput) {
@@ -161,7 +163,8 @@ export function parseVaultsConfig(
   }
 
   if (vaultPath && vaultPath.trim()) {
-    const singleVaultPath = vaultPath.trim();
+    const singleVaultPath = path.resolve(vaultPath.trim());
+    scanRoots.push(singleVaultPath);
     const vaultBase = path.basename(singleVaultPath) || "default";
 
     // Auto-discover sub-vaults if this is a parent directory containing multiple vaults
@@ -169,8 +172,6 @@ export function parseVaultsConfig(
       let discoveredSubVaults: string[] = [];
       try {
         if (fs.existsSync(singleVaultPath) && fs.statSync(singleVaultPath).isDirectory()) {
-          const hasOwnObsidian = fs.existsSync(path.join(singleVaultPath, ".obsidian"));
-          // If the directory does not have its own .obsidian, or if auto-scan finds subdirectories with .obsidian
           const entries = fs.readdirSync(singleVaultPath, { withFileTypes: true });
           for (const entry of entries) {
             if (entry.isDirectory() && !entry.name.startsWith(".")) {
@@ -214,7 +215,7 @@ export function parseVaultsConfig(
     defaultVault = vaults["default"] ? "default" : vaultNames[0];
   }
 
-  return { vaults, vaultDefinitions, defaultVault };
+  return { vaults, vaultDefinitions, defaultVault, scanRoots };
 }
 
 const ConfigSchema = z.object({

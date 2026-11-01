@@ -394,4 +394,54 @@ describe("Multi-Vault Architecture & Isolation", () => {
       ).not.toThrow();
     });
   });
+
+  describe("Dynamic Runtime Vault Discovery", () => {
+    it("should dynamically detect and access a newly added vault without restarting", async () => {
+      // Initialize with only personal and work vaults
+      const service = new VaultService(
+        {
+          personal: personalVaultDir,
+          work: workVaultDir,
+        },
+        cliAdapter,
+        undefined,
+        "personal",
+        undefined,
+        [tempBaseDir]
+      );
+
+      const initialList = await service.listVaults();
+      expect(initialList.totalVaults).toBe(2);
+
+      // Create a 3rd vault dynamically inside tempBaseDir (simulating new folder in obsidian-vault)
+      const dynamicVaultDir = path.join(tempBaseDir, "research-vault");
+      fs.mkdirSync(path.join(dynamicVaultDir, ".obsidian"), { recursive: true });
+      fs.writeFileSync(
+        path.join(dynamicVaultDir, "Notes.md"),
+        "# Research Findings\nAutonomous AI exploration."
+      );
+
+      // Call listVaults() - should dynamically discover research-vault
+      const updatedList = await service.listVaults();
+      expect(updatedList.totalVaults).toBe(3);
+      const found = updatedList.vaults.find((v) => v.name === "research-vault");
+      expect(found).toBeDefined();
+      expect(found?.path).toBe(dynamicVaultDir);
+      expect(found?.markdownFiles).toBe(1);
+
+      // Direct read access from newly added vault
+      const note = await service.readNote("Notes.md", false, "research-vault");
+      expect(note.content).toContain("Research Findings");
+
+      // Direct write access to newly added vault
+      await service.createNote("Summary.md", "# Summary\nConclusion.", undefined, false, undefined, "research-vault");
+      expect(fs.existsSync(path.join(dynamicVaultDir, "Summary.md"))).toBe(true);
+
+      // Delete the dynamic vault directory and verify listVaults cleans it up
+      fs.rmSync(dynamicVaultDir, { recursive: true, force: true });
+      const afterDeleteList = await service.listVaults();
+      expect(afterDeleteList.totalVaults).toBe(2);
+      expect(afterDeleteList.vaults.find((v) => v.name === "research-vault")).toBeUndefined();
+    });
+  });
 });

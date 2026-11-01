@@ -28,7 +28,8 @@ export function createMcpServer(config: AppConfig, getAuthContext?: () => AuthCo
     cliAdapter,
     undefined,
     parsed.defaultVault,
-    parsed.vaultDefinitions
+    parsed.vaultDefinitions,
+    parsed.scanRoots
   );
   const authManager = new AuthManager(config);
   const rateLimiter = new RateLimiter(config.RATE_LIMIT_PER_MINUTE);

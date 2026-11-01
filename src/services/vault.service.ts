@@ -37,21 +37,34 @@ export interface VaultInstance {
   isDefault: boolean;
   readOnly: boolean;
   scopes?: ScopeType[];
+  isDynamicallyDiscovered?: boolean;
 }
 
 export class VaultService {
   private readonly vaults: Map<string, VaultInstance> = new Map();
   private defaultVaultName: string = "default";
   private readonly cliAdapter: ObsidianCliAdapter;
+  private readonly scanRoots: Set<string> = new Set();
+  private readonly vaultDefinitions: Record<string, VaultDefinition>;
 
   constructor(
     vaultsOrPathGuard: PathGuard | Record<string, any> | Map<string, any>,
     cliAdapter: ObsidianCliAdapter,
     trashManager?: TrashManager,
     defaultVault?: string,
-    vaultDefinitions?: Record<string, VaultDefinition>
+    vaultDefinitions?: Record<string, VaultDefinition>,
+    scanRoots?: string[]
   ) {
     this.cliAdapter = cliAdapter;
+    this.vaultDefinitions = vaultDefinitions || {};
+
+    if (scanRoots) {
+      for (const r of scanRoots) {
+        if (r && fs.existsSync(r)) {
+          this.scanRoots.add(path.resolve(r));
+        }
+      }
+    }
 
     if (vaultsOrPathGuard instanceof PathGuard) {
       const root = vaultsOrPathGuard.getVaultRoot();
@@ -72,6 +85,10 @@ export class VaultService {
       this.vaults.set(name, instance);
       if (name !== "default") {
         this.vaults.set("default", instance);
+      }
+      const parent = path.dirname(root);
+      if (parent && parent !== "/" && parent !== root && fs.existsSync(parent)) {
+        this.scanRoots.add(parent);
       }
     } else {
       const entries =
@@ -116,10 +133,66 @@ export class VaultService {
           readOnly: isReadOnly,
           scopes: scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined),
         });
+
+        const parent = path.dirname(resolvedPath);
+        if (parent && parent !== "/" && parent !== resolvedPath && fs.existsSync(parent)) {
+          this.scanRoots.add(parent);
+        }
       }
 
       if (!this.vaults.has("default") && this.vaults.has(this.defaultVaultName)) {
         this.vaults.set("default", this.vaults.get(this.defaultVaultName)!);
+      }
+    }
+  }
+
+  public scanDynamicVaults(): void {
+    for (const scanDir of this.scanRoots) {
+      try {
+        if (!fs.existsSync(scanDir)) continue;
+        const stat = fs.statSync(scanDir);
+        if (!stat.isDirectory()) continue;
+
+        const entries = fs.readdirSync(scanDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+          if (["node_modules", "dist", "build", "coverage", ".git", ".obsidian-mcp"].includes(entry.name)) continue;
+
+          const candidatePath = path.resolve(path.join(scanDir, entry.name));
+          const obsidianDir = path.join(candidatePath, ".obsidian");
+          const hasObsidian = fs.existsSync(obsidianDir) && fs.statSync(obsidianDir).isDirectory();
+
+          if (hasObsidian) {
+            const existing = this.vaults.get(entry.name);
+            if (!existing) {
+              const pg = new PathGuard(candidatePath);
+              const tm = new TrashManager(candidatePath);
+              const def = this.vaultDefinitions?.[entry.name];
+              const isReadOnly = def?.readOnly ?? false;
+
+              this.vaults.set(entry.name, {
+                name: entry.name,
+                root: candidatePath,
+                pathGuard: pg,
+                trashManager: tm,
+                isDefault: entry.name === this.defaultVaultName,
+                readOnly: isReadOnly,
+                scopes: def?.scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined),
+                isDynamicallyDiscovered: true,
+              });
+            }
+          }
+        }
+      } catch {
+        // Continue scanning remaining roots
+      }
+    }
+
+    // Clean up dynamically discovered vaults whose directories were removed from disk
+    for (const [name, instance] of Array.from(this.vaults.entries())) {
+      if (name === "default") continue;
+      if (instance.isDynamicallyDiscovered && !fs.existsSync(instance.root)) {
+        this.vaults.delete(name);
       }
     }
   }
@@ -134,9 +207,42 @@ export class VaultService {
     }
 
     const trimmed = vaultName.trim();
-    const vault = this.vaults.get(trimmed);
+    let vault = this.vaults.get(trimmed);
     if (!vault) {
-      const available = Array.from(new Set(this.vaults.keys())).join(", ");
+      // Trigger dynamic scan in case a new vault was recently added
+      this.scanDynamicVaults();
+      vault = this.vaults.get(trimmed);
+    }
+
+    // If still not found by direct name, check if a directory matching trimmed exists in any scan root
+    if (!vault) {
+      for (const scanDir of this.scanRoots) {
+        const candidate = path.resolve(path.join(scanDir, trimmed));
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+          const pg = new PathGuard(candidate);
+          const tm = new TrashManager(candidate);
+          const def = this.vaultDefinitions?.[trimmed];
+          const isReadOnly = def?.readOnly ?? false;
+          vault = {
+            name: trimmed,
+            root: candidate,
+            pathGuard: pg,
+            trashManager: tm,
+            isDefault: trimmed === this.defaultVaultName,
+            readOnly: isReadOnly,
+            scopes: def?.scopes ?? (isReadOnly ? [Scope.VAULT_READ] : undefined),
+            isDynamicallyDiscovered: true,
+          };
+          this.vaults.set(trimmed, vault);
+          break;
+        }
+      }
+    }
+
+    if (!vault) {
+      const available = Array.from(new Set(this.vaults.keys()))
+        .filter((k) => k !== "default")
+        .join(", ");
       throw new ObsidianMcpError(
         ErrorCode.NOT_FOUND,
         `Vault '${trimmed}' not found. Available vaults: [${available}]`,
@@ -190,6 +296,8 @@ export class VaultService {
   // --- VAULT DOMAIN ---
 
   public async listVaults() {
+    this.scanDynamicVaults();
+
     const list: Array<{
       name: string;
       path: string;

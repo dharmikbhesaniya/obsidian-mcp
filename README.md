@@ -109,9 +109,9 @@ This server is accompanied by the official companion repository: [Universal Obsi
 
 ## Feature & Capability Summary
 
-The server exposes 54 strongly-typed semantic tools (with advanced CLI escape hatch gated behind `ENABLE_ADVANCED_CLI=true`), 7 direct read resources, and 7 guided prompts:
+The server exposes 62 strongly-typed semantic tools (61 standard tools including sandboxed Git operations, plus an advanced CLI escape hatch gated behind `ENABLE_ADVANCED_CLI=true`), 7 direct read resources, and 7 guided prompts:
 
-### Tools (54 Semantic Capabilities)
+### Tools (62 Semantic Capabilities)
 - **Vault Domain (4 tools)**: `obsidian_list_vaults` (multi-vault inventory with deduplication), `obsidian_get_vault`, `obsidian_list_files` (recursive traversal & extension filtering), `obsidian_get_file_info`
 - **Notes Domain (8 tools)**: `obsidian_read_note`, `obsidian_create_note`, `obsidian_append_note`, `obsidian_prepend_note`, `obsidian_update_note`, `obsidian_patch_note` (surgical search/replace/regex editing), `obsidian_move_note`, `obsidian_delete_note` (safe atomic trash by default)
 - **Search Domain (2 tools)**: `obsidian_search`, `obsidian_search_context`
@@ -130,6 +130,7 @@ The server exposes 54 strongly-typed semantic tools (with advanced CLI escape ha
 - **Tasks Domain (2 tools)**: `obsidian_list_tasks`, `obsidian_toggle_task`
 - **Knowledge Graph Domain (6 tools)**: `obsidian_get_backlinks`, `obsidian_get_links`, `obsidian_get_link_path`, `obsidian_get_orphans`, `obsidian_get_unresolved_links`, `obsidian_get_deadends`
 - **Tags & Bases Domain (4 tools)**: `obsidian_get_tags`, `obsidian_get_tag_notes`, `obsidian_list_bases`, `obsidian_query_base`
+- **Git Subsystem Domain (8 tools)**: `obsidian_git_status` (working tree and branch inspection), `obsidian_git_diff` (staged or unstaged unified diffs), `obsidian_git_log` (structured commit history), `obsidian_git_add` (safe path staging), `obsidian_git_commit` (atomic commit creation), `obsidian_git_push` (upstream remote push), `obsidian_git_pull` (upstream remote fetch and merge), `obsidian_git_exec` (guarded allowlisted Git command execution)
 - **Guarded Escape Hatch (1 tool)**: `obsidian_cli` *(strictly allowlisted through central command registry, disabled by default, gated by `ENABLE_ADVANCED_CLI=true` and `vault:developer` scope)*
 
 ### Resources (7 Direct Read Contexts)
@@ -159,7 +160,7 @@ For complete instruction sets, prompts, and IDE rule definitions that empower AI
 👉 **[Universal Obsidian Suite (dharmikbhesaniya/obsidian-skill)](https://github.com/dharmikbhesaniya/obsidian-skill)**
 
 ### What the Companion Suite Provides
-- **`obsidian-mcp` Skill**: Clear operational instructions, tool schemas, and best practices for AI agents executing these 54 semantic tools.
+- **`obsidian-mcp` Skill**: Clear operational instructions, tool schemas, and best practices for AI agents executing these 62 semantic tools.
 - **Claude Code & Antigravity Plugins**: Discoverable plugins (`.claude-plugin/`) and pre-configured `.mcp.json` definitions to register this MCP server automatically.
 - **Cursor Rules & MDC**: Ready-to-copy `.cursorrules` and `.cursor/rules/obsidian.mdc` files.
 - **OpenAI & ChatGPT Tools**: Pre-built JSON function definitions ([function_tools.json](https://github.com/dharmikbhesaniya/obsidian-skill/tree/main/integrations/openai)).
@@ -288,15 +289,173 @@ To provide natural collaboration without requiring manual configuration for ever
 
 ### Sandboxed Vault Git Integration
 
-The server provides a sandboxed Git subsystem allowing AI assistants to inspect repository history, stage documents, commit changes, and synchronize with remotes strictly within the boundary of an authorized vault.
+The Sandboxed Vault Git Subsystem provides version control automation directly inside authorized Obsidian repositories. It enables AI coding assistants and autonomous agents to inspect repository status, review unified diffs, stage files, create atomic commits, and synchronize with upstream remotes within strict containment boundaries.
+
+The architecture ensures that version control workflows remain isolated to the designated vault path, preventing command injection, unauthorized directory escape, and credential leakage.
+
+```mermaid
+flowchart TD
+    Client["AI Assistant (Claude / ChatGPT / Cursor)"] --> Tools{"Git Semantic Tools"}
+    Tools -->|"obsidian_git_status / diff / log"| ReadCheck["Scope: vault:read"]
+    Tools -->|"obsidian_git_add / commit / push / pull"| WriteCheck["Scope: vault:write & Mode != :ro"]
+    Tools -->|"obsidian_git_exec"| DevCheck["Scope: vault:developer & Allowlist Validated"]
+    ReadCheck --> PathGuard["PathGuard (Boundary & RelPath Validation)"]
+    WriteCheck --> PathGuard
+    DevCheck --> Denylist["Argument Denylist Filter"]
+    Denylist --> PathGuard
+    PathGuard --> GitAdapter["GitCliAdapter (execFile)"]
+    GitAdapter --> EnvGuard["Ceiling Directory & CWD Injection"]
+    EnvGuard --> Exec["git binary (Isolated Child Process)"]
+    Exec --> OutputFilter["Credential & Token Redaction"]
+    OutputFilter --> Response["Clean JSON Result to Client"]
+```
 
 #### Security & Sandboxing Guarantees
-1. **Root Boundary Containment**: All Git commands execute with working directory strictly set to `cwd: vault.root`.
-2. **Ceiling Directory Trapping**: Automatically injects `GIT_CEILING_DIRECTORIES: path.dirname(vault.root)`, preventing Git from ascending into parent folders if a repository is uninitialized.
-3. **Shell Injection Immunity**: Uses Node.js `execFile("git", ...)` directly, eliminating shell metacharacter and command substitution risks (`|`, `;`, `&&`, `$()`).
-4. **Dangerous Flag Denylist**: Explicitly blocks escape flags including `--upload-pack`, `--receive-pack`, `-c <config>` arbitrary overrides, and `--work-tree` / `--git-dir` redirections.
-5. **Read-Only Vault Protection**: Vaults configured with `:ro` allow query commands (`status`, `diff`, `log`) while deterministically rejecting mutations (`add`, `commit`, `push`, `pull`) with a `403 Forbidden` response.
-6. **Credential Redaction**: Embedded tokens in remote URLs (e.g. `https://***@github.com`) are stripped from command outputs before returning to the assistant.
+
+1. **Root Boundary Containment**:  
+   All Git subcommands execute with the working directory locked to `cwd: vault.root`. The process cannot wander into external parent directories or adjacent sibling folders.
+
+2. **Ceiling Directory Trapping**:  
+   The runtime automatically injects `GIT_CEILING_DIRECTORIES: path.dirname(vault.root)`. If a vault does not contain an initialized `.git` repository, Git halts immediately instead of ascending into a parent workspace or system folder.
+
+3. **Shell Injection Immunity**:  
+   Subprocess invocations bypass the system shell by utilizing Node.js `execFile("git", ...)` directly. Metacharacters, command chaining operators, and shell expansions (`|`, `;`, `&&`, `$()`) are treated as literal arguments.
+
+4. **Dangerous Argument Denylist**:  
+   The system blocks flags that execute commands or redirect repository boundaries. Banned arguments include `--upload-pack`, `--receive-pack`, arbitrary configuration injection (`-c <key>=<value>`), and path redirection flags (`--work-tree`, `--git-dir`).
+
+5. **Read-Only Mode Isolation (`:ro`)**:  
+   Vaults registered with the `:ro` flag permit historical queries (`status`, `diff`, `log`) while deterministically blocking modifications (`add`, `commit`, `push`, `pull`, `exec`) with a `403 Forbidden` error.
+
+6. **PathGuard Relative Path Sanitization**:  
+   All path parameters supplied to staging and diff routines undergo strict normalization. Attempts to reference parent paths (such as `../../etc/passwd`) are rejected with `PATH_INVALID` before reaching the Git executable.
+
+7. **Credential and Token Redaction**:  
+   Output streams pass through a credential masking filter that replaces embedded authentication tokens and user passwords in remote URLs (`https://***@github.com`) before returning data to the AI assistant.
+
+#### Git Tools Reference Table
+
+| Tool Name | Required Scope | Primary Operation | Key Parameters |
+| :--- | :--- | :--- | :--- |
+| `obsidian_git_status` | `vault:read` | Inspect branch state, tracking branch, staged, modified, and untracked files | `vault` (optional) |
+| `obsidian_git_diff` | `vault:read` | Produce unified diffs for uncommitted or staged changes | `file` (optional), `staged` (boolean), `vault` (optional) |
+| `obsidian_git_log` | `vault:read` | Retrieve structured commit history with hashes, authors, dates, and messages | `max_count` (1–100), `file` (optional), `vault` (optional) |
+| `obsidian_git_add` | `vault:write` | Stage modified or newly created markdown notes for commit | `files` (array of relative paths), `vault` (optional) |
+| `obsidian_git_commit` | `vault:write` | Author an atomic Git commit with a descriptive message and optional author | `message` (string), `author_name` (optional), `author_email` (optional), `vault` (optional) |
+| `obsidian_git_push` | `vault:write` | Push committed local revisions to an upstream remote repository | `remote` (default: `origin`), `branch` (optional), `vault` (optional) |
+| `obsidian_git_pull` | `vault:write` | Fetch and merge changes from an upstream remote repository | `remote` (default: `origin`), `branch` (optional), `vault` (optional) |
+| `obsidian_git_exec` | `vault:developer` | Execute allowlisted low-level Git commands within vault boundary | `args` (array of arguments), `vault` (optional) |
+
+#### Tool Invocation Examples
+
+##### 1. Inspecting Working Tree Status (`obsidian_git_status`)
+```json
+{
+  "vault": "dharmik-professional-obsidian-vault"
+}
+```
+*Structured Response:*
+```json
+{
+  "initialized": true,
+  "branch": "main",
+  "clean": false,
+  "staged": [
+    { "path": "Projects/Enterprise Architecture.md", "status": "modified" }
+  ],
+  "unstaged": [
+    { "path": "Daily/2026-11-02.md", "status": "modified" }
+  ],
+  "untracked": [
+    "Meeting Notes/Q4 Review.md"
+  ]
+}
+```
+
+##### 2. Inspecting Working Tree Diffs (`obsidian_git_diff`)
+```json
+{
+  "file": "Projects/Enterprise Architecture.md",
+  "staged": true,
+  "vault": "professional"
+}
+```
+*Structured Response:*
+```json
+{
+  "file": "Projects/Enterprise Architecture.md",
+  "staged": true,
+  "diff": "diff --git a/Projects/Enterprise Architecture.md b/Projects/Enterprise Architecture.md\n--- a/Projects/Enterprise Architecture.md\n+++ b/Projects/Enterprise Architecture.md\n@@ -12,3 +12,4 @@\n- Status: In Progress\n+ Status: Completed"
+}
+```
+
+##### 3. Staging and Creating an Atomic Commit (`obsidian_git_add` & `obsidian_git_commit`)
+```json
+// Step 1: Stage specific relative files
+{
+  "files": ["Projects/Enterprise Architecture.md", "Daily/2026-11-02.md"],
+  "vault": "professional"
+}
+
+// Step 2: Author atomic commit
+{
+  "message": "docs: update enterprise architecture review and daily summary",
+  "author_name": "Antigravity Agent",
+  "author_email": "agent@enterprise.local",
+  "vault": "professional"
+}
+```
+*Structured Response:*
+```json
+{
+  "success": true,
+  "message": "Commit created successfully.",
+  "output": "[main 4e8b1d2] docs: update enterprise architecture review and daily summary\n 2 files changed, 14 insertions(+), 3 deletions(-)"
+}
+```
+
+##### 4. Synchronizing with Upstream Remote (`obsidian_git_push`)
+```json
+{
+  "remote": "origin",
+  "branch": "main",
+  "vault": "professional"
+}
+```
+*Structured Response:*
+```json
+{
+  "success": true,
+  "remote": "origin",
+  "branch": "main",
+  "output": "To github.com:org/vault.git\n   3c7a91f..4e8b1d2  main -> main"
+}
+```
+
+#### Remote Server Synchronization Setup
+
+For remote production environments such as headless VPS nodes or Docker containers, upstream synchronization requires credential configuration on the host:
+
+1. **SSH Deploy Keys (Recommended)**:  
+   Generate a dedicated ED25519 deploy key for the service user and grant read/write access in your repository settings:
+   ```bash
+   ssh-keygen -t ed25519 -C "obsidian-mcp@server" -f ~/.ssh/id_ed25519
+   ```
+
+2. **Personal Access Token via HTTPS**:  
+   Configure the upstream remote URL with a personal access token. Any sensitive token embedded in the URL is masked automatically in tool responses:
+   ```bash
+   git remote set-url origin https://ghp_SECRET_TOKEN@github.com/organization/vault.git
+   ```
+
+#### Error Handling Protocol
+
+| Error Code | HTTP Status | Description |
+| :--- | :--- | :--- |
+| `GIT_NOT_INITIALIZED` | `404 Not Found` | The specified vault directory is not an initialized Git repository (missing `.git`). |
+| `GIT_ERROR` | `500 Server Error` | The underlying Git process returned a non-zero exit code (e.g. merge conflict, network timeout). |
+| `FORBIDDEN` | `403 Forbidden` | Mutation attempted on a `:ro` vault, or an invocation contained banned configuration flags (`-c`, `--upload-pack`). |
+| `PATH_INVALID` | `400 Bad Request` | File path argument attempts directory escape outside the designated vault boundary. |
 
 ### Multi-Client Integration Guide
 

@@ -10,3 +10,6 @@ yarn-error.log*
 .DS_Store
 coverage/
 .turbo/
+
+# Host-specific production overlay (absolute vault paths; secrets come from .env.production)
+docker-compose.prod.yml

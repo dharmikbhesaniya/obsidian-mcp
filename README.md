@@ -23,6 +23,7 @@ This server is accompanied by the official companion repository: [Universal Obsi
   - [Capability Scopes Matrix](#capability-scopes-matrix)
   - [Universal AI Client Protocol](#universal-ai-client-protocol)
   - [Smart Alias Resolution & Ambiguity Protection](#smart-alias-resolution--ambiguity-protection)
+  - [Sandboxed Vault Git Integration](#sandboxed-vault-git-integration)
   - [Multi-Client Integration Guide](#multi-client-integration-guide)
 - [Environment Variables & Configuration Reference](#environment-variables--configuration-reference)
   - [Environment Variables Overview](#environment-variables-overview)
@@ -207,6 +208,9 @@ flowchart TD
 | **Content Mutation** | `vault:write` | **Blocked (403)** | `obsidian_create_note`, `obsidian_update_note`, `obsidian_patch_note`, `obsidian_append_note` |
 | **Metadata Editing** | `vault:write` | **Blocked (403)** | `obsidian_set_property`, `obsidian_remove_property`, `obsidian_toggle_task` |
 | **File Deletion** | `vault:delete` | **Blocked (403)** | `obsidian_delete_note`, `obsidian_move_note` (atomic trash preservation) |
+| **Git Read Operations** | `vault:read` | Yes | `obsidian_git_status`, `obsidian_git_diff`, `obsidian_git_log` |
+| **Git Mutation & Sync** | `vault:write` | **Blocked (403)** | `obsidian_git_add`, `obsidian_git_commit`, `obsidian_git_push`, `obsidian_git_pull` |
+| **Git Advanced** | `vault:developer` | **Blocked (403)** | Guarded allowlisted subcommand execution via `obsidian_git_exec` |
 | **Desktop CLI** | `vault:developer` | **Blocked (403)** | Allowlisted CLI process executions via `obsidian_execute_command` |
 
 ### Universal AI Client Protocol
@@ -281,6 +285,18 @@ To provide natural collaboration without requiring manual configuration for ever
    }
    ```
    This error protocol informs the AI assistant (ChatGPT, Claude, Cursor) that multiple candidates exist, prompting the AI to request clarification from the user rather than guessing or modifying the wrong vault.
+
+### Sandboxed Vault Git Integration
+
+The server provides a sandboxed Git subsystem allowing AI assistants to inspect repository history, stage documents, commit changes, and synchronize with remotes strictly within the boundary of an authorized vault.
+
+#### Security & Sandboxing Guarantees
+1. **Root Boundary Containment**: All Git commands execute with working directory strictly set to `cwd: vault.root`.
+2. **Ceiling Directory Trapping**: Automatically injects `GIT_CEILING_DIRECTORIES: path.dirname(vault.root)`, preventing Git from ascending into parent folders if a repository is uninitialized.
+3. **Shell Injection Immunity**: Uses Node.js `execFile("git", ...)` directly, eliminating shell metacharacter and command substitution risks (`|`, `;`, `&&`, `$()`).
+4. **Dangerous Flag Denylist**: Explicitly blocks escape flags including `--upload-pack`, `--receive-pack`, `-c <config>` arbitrary overrides, and `--work-tree` / `--git-dir` redirections.
+5. **Read-Only Vault Protection**: Vaults configured with `:ro` allow query commands (`status`, `diff`, `log`) while deterministically rejecting mutations (`add`, `commit`, `push`, `pull`) with a `403 Forbidden` response.
+6. **Credential Redaction**: Embedded tokens in remote URLs (e.g. `https://***@github.com`) are stripped from command outputs before returning to the assistant.
 
 ### Multi-Client Integration Guide
 
@@ -375,6 +391,12 @@ The Obsidian MCP Server is configured entirely via environment variables (in you
 | `MAX_SEARCH_RESULTS` | number | `50` | Maximum results returned by full-text and semantic search routines. |
 | `ENABLE_DESTRUCTIVE_TOOLS` | boolean | `true` | Allows deletion tools. When enabled, `obsidian_delete_note` recycles files to `.trash` safely. |
 | `ENABLE_ADVANCED_CLI` | boolean | `false` | Gated escape-hatch exposing raw `obsidian_cli` execution to clients with `vault:developer` scope. |
+| `ENABLE_GIT_TOOLS` | boolean | `true` | Master toggle registering Git tools (`obsidian_git_*`). Set `false` to disable all Git operations. |
+| `GIT_BIN_PATH` | string | `git` | System binary name or absolute path to the Git executable. |
+| `GIT_AUTHOR_NAME` | string | *None* | Fallback commit author name when not configured in local vault repository. |
+| `GIT_AUTHOR_EMAIL` | string | *None* | Fallback commit author email when not configured in local vault repository. |
+| `GIT_DEFAULT_REMOTE` | string | `origin` | Default remote target for push and pull synchronization. |
+| `GIT_TIMEOUT_MS` | number | `30000` | Process execution timeout (milliseconds) for Git operations. |
 | `AUDIT_LOG_ENABLED` | boolean | `true` | Emits structured JSON audit records to standard error (`stderr`) for every tool invocation. |
 
 ---

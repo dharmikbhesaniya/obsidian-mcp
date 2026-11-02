@@ -370,6 +370,16 @@ const ConfigSchema = z.object({
     .union([z.boolean(), z.string().transform((val) => val === "true" || val === "1")])
     .default(true),
 
+  // Git integration configuration
+  ENABLE_GIT_TOOLS: z
+    .union([z.boolean(), z.string().transform((val) => val === "true" || val === "1")])
+    .default(true),
+  GIT_BIN_PATH: z.string().default("git"),
+  GIT_AUTHOR_NAME: z.string().optional(),
+  GIT_AUTHOR_EMAIL: z.string().optional(),
+  GIT_DEFAULT_REMOTE: z.string().default("origin"),
+  GIT_TIMEOUT_MS: z.coerce.number().default(30000),
+
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 }).superRefine((data, ctx) => {
   if (!data.OBSIDIAN_VAULT_PATH && !data.OBSIDIAN_VAULTS) {

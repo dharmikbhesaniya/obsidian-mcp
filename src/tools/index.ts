@@ -7,6 +7,8 @@ import { AuditLogger } from "../security/audit.js";
 import { TOOL_SCOPES } from "../config/scopes.js";
 import { AppConfig } from "../config/config.js";
 import * as Schemas from "../schemas/tools.js";
+import { GitService } from "../services/git.service.js";
+import { registerGitTools } from "./git.js";
 
 export function registerTools(
   server: McpServer,
@@ -15,7 +17,8 @@ export function registerTools(
   rateLimiter: RateLimiter,
   auditLogger: AuditLogger,
   config?: AppConfig,
-  getAuthContext?: () => AuthContext
+  getAuthContext?: () => AuthContext,
+  gitService?: GitService
 ) {
   // Helper to wrap tool execution with Auth, Rate-limiting, and Audit logging
   const wrapHandler = (toolName: string, fn: (args: any) => Promise<any>) => {
@@ -621,5 +624,10 @@ export function registerTools(
       },
       wrapHandler("obsidian_cli", (args) => vaultService.executeCli(args.command, args.args, args.vault))
     );
+  }
+
+  // 21. Git Integration domain (Gated by ENABLE_GIT_TOOLS !== false)
+  if (gitService && config?.ENABLE_GIT_TOOLS !== false) {
+    registerGitTools(server, gitService, wrapHandler);
   }
 }

@@ -99,6 +99,16 @@ export const TOOL_SCOPES: Record<string, ScopeType> = {
   obsidian_open_note: Scope.VAULT_READ,
   obsidian_open_in_app: Scope.VAULT_READ,
 
+  // Git domain
+  obsidian_git_status: Scope.VAULT_READ,
+  obsidian_git_diff: Scope.VAULT_READ,
+  obsidian_git_log: Scope.VAULT_READ,
+  obsidian_git_add: Scope.VAULT_WRITE,
+  obsidian_git_commit: Scope.VAULT_WRITE,
+  obsidian_git_push: Scope.VAULT_WRITE,
+  obsidian_git_pull: Scope.VAULT_WRITE,
+  obsidian_git_exec: Scope.VAULT_DEVELOPER,
+
   // Plugins & Snippets domain
   obsidian_list_plugins: Scope.VAULT_READ,
   obsidian_list_snippets: Scope.VAULT_READ,

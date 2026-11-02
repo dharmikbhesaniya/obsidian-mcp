@@ -4,7 +4,9 @@ import { AuthManager, AuthContext } from "./security/auth.js";
 import { RateLimiter } from "./security/rate-limit.js";
 import { AuditLogger } from "./security/audit.js";
 import { ObsidianCliAdapter } from "./adapters/obsidian/cli.adapter.js";
+import { GitCliAdapter } from "./adapters/git/git.adapter.js";
 import { VaultService } from "./services/vault.service.js";
+import { GitService } from "./services/git.service.js";
 import { registerTools } from "./tools/index.js";
 import { registerResources } from "./resources/index.js";
 import { registerPrompts } from "./prompts/index.js";
@@ -57,8 +59,24 @@ export function createMcpServer(
   const authManager = new AuthManager(config);
   const rateLimiter = new RateLimiter(config.RATE_LIMIT_PER_MINUTE);
   const auditLogger = new AuditLogger(config.AUDIT_LOG_ENABLED);
+  const gitAdapter = new GitCliAdapter({
+    binaryPath: config.GIT_BIN_PATH,
+    timeoutMs: config.GIT_TIMEOUT_MS,
+    defaultAuthorName: config.GIT_AUTHOR_NAME,
+    defaultAuthorEmail: config.GIT_AUTHOR_EMAIL,
+  });
+  const gitService = new GitService(vaultService, gitAdapter);
 
-  registerTools(server, vaultService, authManager, rateLimiter, auditLogger, config, getAuthContext);
+  registerTools(
+    server,
+    vaultService,
+    authManager,
+    rateLimiter,
+    auditLogger,
+    config,
+    getAuthContext,
+    gitService
+  );
   registerResources(server, vaultService);
   registerPrompts(server);
 
@@ -66,6 +84,8 @@ export function createMcpServer(
     server,
     vaultService,
     cliAdapter,
+    gitService,
+    gitAdapter,
     pathGuard: vaultService.getPathGuard(),
     authManager,
   };

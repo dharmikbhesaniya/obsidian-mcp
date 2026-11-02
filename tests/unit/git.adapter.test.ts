@@ -77,3 +77,4 @@ describe("GitCliAdapter Unit Tests", () => {
     });
   });
 });
+

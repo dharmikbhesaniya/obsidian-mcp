@@ -68,3 +68,4 @@ export const GitExecSchema = z.object({
   args: z.array(z.string()).default([]).describe("Additional arguments passed to the Git subcommand"),
   vault: VaultNameSchema,
 });
+

@@ -235,6 +235,7 @@ export class VaultService {
         if (!fs.existsSync(scanDir)) continue;
         const stat = fs.statSync(scanDir);
         if (!stat.isDirectory()) continue;
+        if (fs.existsSync(path.join(scanDir, ".obsidian"))) continue;
 
         const entries = fs.readdirSync(scanDir, { withFileTypes: true });
         for (const entry of entries) {
@@ -330,6 +331,7 @@ export class VaultService {
     // 4. Check if directory matching trimmed exists in any scan root
     if (this.enableAutoDiscovery) {
       for (const scanDir of this.scanRoots) {
+        if (fs.existsSync(path.join(scanDir, ".obsidian"))) continue;
         const candidate = path.resolve(path.join(scanDir, trimmed));
         if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
           const pg = new PathGuard(candidate);
@@ -358,6 +360,7 @@ export class VaultService {
       for (const scanDir of this.scanRoots) {
         try {
           if (!fs.existsSync(scanDir) || !fs.statSync(scanDir).isDirectory()) continue;
+          if (fs.existsSync(path.join(scanDir, ".obsidian"))) continue;
           const entries = fs.readdirSync(scanDir, { withFileTypes: true });
           for (const entry of entries) {
             if (!entry.isDirectory() || entry.name.startsWith(".")) continue;

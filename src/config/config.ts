@@ -207,10 +207,35 @@ export function parseVaultsConfig(
     const rawPaths = vaultPath.split(",").map((s) => s.trim()).filter(Boolean);
     for (const rawP of rawPaths) {
       const singleVaultPath = path.resolve(rawP);
-      if (enableAutoDiscovery) {
-        scanRoots.push(singleVaultPath);
-      }
       const vaultBase = path.basename(singleVaultPath) || "default";
+
+      // If singleVaultPath itself contains .obsidian directory, it is an Obsidian vault.
+      // Do not dissect its folders into sub-vaults.
+      let hasOwnObsidian = false;
+      try {
+        const obsDir = path.join(singleVaultPath, ".obsidian");
+        hasOwnObsidian = fs.existsSync(obsDir) && fs.statSync(obsDir).isDirectory();
+      } catch {}
+
+      if (hasOwnObsidian) {
+        if (!vaults[vaultBase]) {
+          const def = parsePathAndMode(vaultBase, {
+            path: singleVaultPath,
+            readOnly: autoDiscoverReadOnly,
+          });
+          vaults[vaultBase] = def.path;
+          vaultDefinitions[vaultBase] = def;
+        }
+        if (enableAutoDiscovery) {
+          const parentDir = path.dirname(singleVaultPath);
+          if (parentDir && parentDir !== "/" && parentDir !== singleVaultPath && fs.existsSync(parentDir)) {
+            if (!scanRoots.includes(parentDir)) {
+              scanRoots.push(parentDir);
+            }
+          }
+        }
+        continue;
+      }
 
       // Auto-discover sub-vaults if this is a parent directory containing multiple vaults
       let discoveredSubVaults: string[] = [];
@@ -242,6 +267,9 @@ export function parseVaultsConfig(
       }
 
       if (discoveredSubVaults.length > 0) {
+        if (enableAutoDiscovery && !scanRoots.includes(singleVaultPath)) {
+          scanRoots.push(singleVaultPath);
+        }
         for (const subName of discoveredSubVaults) {
           if (!vaults[subName]) {
             const subPath = path.join(singleVaultPath, subName);
@@ -253,24 +281,23 @@ export function parseVaultsConfig(
             vaultDefinitions[subName] = def;
           }
         }
-      } else if (Object.keys(vaults).length === 0) {
-        const def = parsePathAndMode(vaultBase, {
-          path: singleVaultPath,
-          readOnly: autoDiscoverReadOnly,
-        });
-        vaults[vaultBase] = def.path;
-        vaultDefinitions[vaultBase] = def;
-      } else if (!vaults[vaultBase] && !vaults["default"]) {
-        try {
-          if (fs.existsSync(path.join(singleVaultPath, ".obsidian"))) {
-            const def = parsePathAndMode(vaultBase, {
-              path: singleVaultPath,
-              readOnly: autoDiscoverReadOnly,
-            });
-            vaults[vaultBase] = def.path;
-            vaultDefinitions[vaultBase] = def;
+      } else {
+        if (!vaults[vaultBase]) {
+          const def = parsePathAndMode(vaultBase, {
+            path: singleVaultPath,
+            readOnly: autoDiscoverReadOnly,
+          });
+          vaults[vaultBase] = def.path;
+          vaultDefinitions[vaultBase] = def;
+        }
+        if (enableAutoDiscovery) {
+          const parentDir = path.dirname(singleVaultPath);
+          if (parentDir && parentDir !== "/" && parentDir !== singleVaultPath && fs.existsSync(parentDir)) {
+            if (!scanRoots.includes(parentDir)) {
+              scanRoots.push(parentDir);
+            }
           }
-        } catch {}
+        }
       }
     }
   }

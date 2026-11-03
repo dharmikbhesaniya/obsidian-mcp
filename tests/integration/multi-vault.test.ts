@@ -53,6 +53,19 @@ describe("Multi-Vault Architecture & Isolation", () => {
       expect(parsed.vaults["work-vault"]).toBe(workVaultDir);
     });
 
+    it("should preserve vault as a single vault when directory itself has .obsidian, even if it has subdirectories with notes", () => {
+      // Create .obsidian in personalVaultDir and subdirectories with markdown notes
+      fs.mkdirSync(path.join(personalVaultDir, ".obsidian"), { recursive: true });
+      const subFolder = path.join(personalVaultDir, "Projects");
+      fs.mkdirSync(subFolder, { recursive: true });
+      fs.writeFileSync(path.join(subFolder, "App.md"), "# Sub App Note");
+
+      const parsed = parseVaultsConfig(personalVaultDir);
+      expect(Object.keys(parsed.vaults)).toEqual(["personal-vault"]);
+      expect(parsed.vaults["personal-vault"]).toBe(personalVaultDir);
+      expect(parsed.defaultVault).toBe("personal-vault");
+    });
+
     it("should parse JSON dictionary format", () => {
       const input = JSON.stringify({
         personal: "/path/to/personal",

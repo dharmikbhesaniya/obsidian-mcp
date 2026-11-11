@@ -46,16 +46,21 @@ flowchart TD
     Verify -->|Failed| Err["401 Unauthorized"]
 ```
 
-### Dual Authentication Protocols
+### Supported Authentication Schemes
 
 1. **HTTP Authorization Header (Standard RFC 6750)**:
    - Format: `Authorization: Bearer <your-secret-token>`
    - Case-insensitive scheme handling (`Bearer` or `bearer`).
    - Supported by Claude Desktop, Cursor IDE, LibreChat, and terminal tooling.
 
-2. **Query Parameter Token (URL-Embedded Passkey)**:
+2. **Secret Path Routing (`/s/<token>/...`)**:
+   - Format: `https://<domain>/s/<your-secret-token>/mcp` or `https://<domain>/s/<your-secret-token>/sse`
+   - Natively supported across Streamable HTTP (`/s/:token/mcp`), Server-Sent Events (`/s/:token/sse`), and message dispatch (`/s/:token/messages`).
+   - Specifically engineered for AI clients that do not permit custom headers and require tokens in the URL path.
+
+3. **Query Parameter Token (URL-Embedded Passkey)**:
    - Format: `?token=<your-secret-token>` (or `?auth_token=...` / `?bearer_token=...`)
-   - Supported across all endpoints: Streamable HTTP (`/mcp`), Server-Sent Events (`/sse`), and legacy message relays (`/messages`).
+   - Supported across all endpoints: Streamable HTTP (`/mcp`), Server-Sent Events (`/sse`), and message relays (`/messages`).
    - Specifically engineered for cloud clients like ChatGPT Plugins that do not allow manual configuration of custom request headers.
 
 ### Default Port & Endpoint Reference

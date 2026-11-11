@@ -78,8 +78,33 @@ export async function createHttpApp(config: AppConfig) {
   }, 60 * 1000);
   cleanupInterval.unref();
 
-  // Operational Health Checks
-  app.get("/health", (_req: Request, res: Response) => {
+  // Extract AuthContext safely; supports Authorization header, query parameter, or /s/:token path
+  const getPathToken = (req: Request): string | undefined => {
+    const pToken = req.params?.token;
+    if (typeof pToken === "string" && pToken.trim().length > 0) return pToken.trim();
+    if (Array.isArray(pToken) && pToken.length > 0 && typeof pToken[0] === "string") return pToken[0].trim();
+    if (typeof req.path === "string") {
+      const match = req.path.match(/^\/s\/([a-zA-Z0-9_\-\.]+)/);
+      if (match) return match[1];
+    }
+    return undefined;
+  };
+
+  const extractAuth = (req: Request): AuthContext => {
+    const header = req.headers.authorization;
+    const pathToken = getPathToken(req);
+    const queryToken =
+      (typeof req.query.token === "string" && req.query.token) ||
+      (typeof req.query.auth_token === "string" && req.query.auth_token) ||
+      (typeof req.query.bearer_token === "string" && req.query.bearer_token) ||
+      pathToken ||
+      undefined;
+    const authHeader = header || (queryToken ? `Bearer ${queryToken}` : undefined);
+    return authManager.authenticateHeader(authHeader);
+  };
+
+  // Operational Health Checks (available at root and under /s/:token)
+  const handleHealth = (_req: Request, res: Response) => {
     res.json({
       status: "ok",
       mcp: "running",
@@ -89,9 +114,9 @@ export async function createHttpApp(config: AppConfig) {
       uptimeSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     });
-  });
+  };
 
-  app.get("/ready", async (_req: Request, res: Response) => {
+  const handleReady = async (_req: Request, res: Response) => {
     const vaultExists = fs.existsSync(pathGuard.getVaultRoot());
     const obsidianReachable = await cliAdapter.checkReachability();
 
@@ -103,26 +128,84 @@ export async function createHttpApp(config: AppConfig) {
       obsidianCli: obsidianReachable ? "connected" : "unavailable",
       timestamp: new Date().toISOString(),
     });
-  });
-
-  // Extract AuthContext safely; supports Authorization header or query parameter
-  const extractAuth = (req: Request): AuthContext => {
-    const header = req.headers.authorization;
-    const queryToken =
-      (typeof req.query.token === "string" && req.query.token) ||
-      (typeof req.query.auth_token === "string" && req.query.auth_token) ||
-      (typeof req.query.bearer_token === "string" && req.query.bearer_token) ||
-      undefined;
-    const authHeader = header || (queryToken ? `Bearer ${queryToken}` : undefined);
-    return authManager.authenticateHeader(authHeader);
   };
 
-  // Canonical MCP Streamable HTTP endpoint
-  app.all("/mcp", async (req: Request, res: Response) => {
+  app.get(["/health", "/s/:token/health"], handleHealth);
+  app.get(["/ready", "/s/:token/ready"], handleReady);
+
+  // Legacy /sse Transport Handshake for older agents and SSE-based clients
+  const handleSse = async (req: Request, res: Response) => {
+    try {
+      const auth = extractAuth(req);
+
+      if (sseSessions.size >= MAX_CONCURRENT_SESSIONS) {
+        res.status(503).json({ error: "Max concurrent SSE sessions exceeded" });
+        return;
+      }
+
+      await authStorage.run(auth, async () => {
+        const { server: sessionServer } = createMcpServer(config);
+        const pathToken = getPathToken(req);
+        const queryToken =
+          (typeof req.query.token === "string" && req.query.token) ||
+          (typeof req.query.auth_token === "string" && req.query.auth_token) ||
+          (typeof req.query.bearer_token === "string" && req.query.bearer_token) ||
+          "";
+
+        let messagesEndpoint: string;
+        if (pathToken) {
+          messagesEndpoint = `/s/${encodeURIComponent(pathToken)}/messages`;
+        } else if (queryToken) {
+          messagesEndpoint = `/messages?token=${encodeURIComponent(queryToken)}`;
+        } else {
+          messagesEndpoint = "/messages";
+        }
+
+        const transport = new SSEServerTransport(messagesEndpoint, res);
+        const record: SseSessionRecord = {
+          server: sessionServer,
+          transport,
+          auth,
+          createdAt: Date.now(),
+          lastActive: Date.now(),
+        };
+        sseSessions.set(transport.sessionId, record);
+
+        transport.onclose = () => {
+          sseSessions.delete(transport.sessionId);
+        };
+
+        await sessionServer.connect(transport);
+      });
+    } catch (err: any) {
+      res.status(err.statusCode || 401).json(err.toJSON ? err.toJSON() : { error: err.message });
+    }
+  };
+
+  // Canonical MCP Streamable HTTP endpoint (supports both Streamable HTTP and SSE fallback probes)
+  const handleMcp = async (req: Request, res: Response) => {
+    // If client requested Server-Sent Events (SSE probe on /mcp), negotiate SSE transport
+    if (req.method === "GET" && req.headers.accept?.includes("text/event-stream")) {
+      return handleSse(req, res);
+    }
+
     try {
       const auth = extractAuth(req);
 
       await authStorage.run(auth, async () => {
+        // If client sends a GET probe without text/event-stream, respond with active MCP info
+        if (req.method === "GET") {
+          const pathToken = getPathToken(req);
+          res.json({
+            status: "ok",
+            protocol: "mcp",
+            authenticated: true,
+            transport: "streamable-http",
+            sseEndpoint: pathToken ? `/s/${encodeURIComponent(pathToken)}/sse` : "/sse",
+          });
+          return;
+        }
+
         const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
         // 1. Route to existing stateful session if session ID is provided and known
@@ -183,48 +266,10 @@ export async function createHttpApp(config: AppConfig) {
         err.toJSON ? err.toJSON() : { error: err.message }
       );
     }
-  });
+  };
 
-  // Legacy /sse Transport Handshake for older agents
-  app.get("/sse", async (req: Request, res: Response) => {
-    try {
-      const auth = extractAuth(req);
-
-      if (sseSessions.size >= MAX_CONCURRENT_SESSIONS) {
-        res.status(503).json({ error: "Max concurrent SSE sessions exceeded" });
-        return;
-      }
-
-      await authStorage.run(auth, async () => {
-        const { server: sessionServer } = createMcpServer(config);
-        const queryToken =
-          (typeof req.query.token === "string" && req.query.token) ||
-          (typeof req.query.auth_token === "string" && req.query.auth_token) ||
-          (typeof req.query.bearer_token === "string" && req.query.bearer_token) ||
-          "";
-        const messagesEndpoint = queryToken
-          ? `/messages?token=${encodeURIComponent(queryToken)}`
-          : "/messages";
-        const transport = new SSEServerTransport(messagesEndpoint, res);
-        const record: SseSessionRecord = {
-          server: sessionServer,
-          transport,
-          auth,
-          createdAt: Date.now(),
-          lastActive: Date.now(),
-        };
-        sseSessions.set(transport.sessionId, record);
-
-        transport.onclose = () => {
-          sseSessions.delete(transport.sessionId);
-        };
-
-        await sessionServer.connect(transport);
-      });
-    } catch (err: any) {
-      res.status(err.statusCode || 401).json(err.toJSON ? err.toJSON() : { error: err.message });
-    }
-  });
+  app.all(["/mcp", "/s/:token/mcp", "/s/:token"], handleMcp);
+  app.get(["/sse", "/s/:token/sse"], handleSse);
 
   // Message Handler for legacy /sse sessions
   const handleMessages = async (req: Request, res: Response) => {
@@ -257,7 +302,7 @@ export async function createHttpApp(config: AppConfig) {
     }
   };
 
-  app.post("/messages", handleMessages);
+  app.post(["/messages", "/s/:token/messages"], handleMessages);
 
   return {
     app,

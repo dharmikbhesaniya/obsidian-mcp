@@ -259,4 +259,51 @@ describe("HTTP Transport Integration", () => {
     // Passed auth check successfully (returns 404 for non-existent session, not 401)
     expect(res.status).toBe(404);
   });
+
+  it("should authenticate via secret path parameter (/s/:token/mcp) and respond to GET probe", async () => {
+    const { app } = await setupApp({
+      AUTH_ENABLED: true,
+      BEARER_TOKEN_HASH: tokenAHash,
+    });
+
+    // 1. GET probe to /s/:token/mcp
+    const res = await dispatchRequest(app, {
+      method: "GET",
+      url: `/s/${validTokenA}/mcp`,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("ok");
+    expect(res.body.authenticated).toBe(true);
+    expect(res.body.sseEndpoint).toContain(`/s/${validTokenA}/sse`);
+
+    // 2. Reject invalid token in secret path
+    const invalid = await dispatchRequest(app, {
+      method: "GET",
+      url: `/s/invalid-secret-token/mcp`,
+    });
+    expect(invalid.status).toBe(401);
+  });
+
+  it("should authenticate via secret path on /s/:token/messages", async () => {
+    const { app } = await setupApp({
+      AUTH_ENABLED: true,
+      BEARER_TOKEN_HASH: tokenAHash,
+    });
+
+    const res = await dispatchRequest(app, {
+      method: "POST",
+      url: `/s/${validTokenA}/messages?sessionId=non-existent`,
+      body: { jsonrpc: "2.0", id: 1 },
+    });
+    // Successfully passed authentication; returns 404 for non-existent session rather than 401
+    expect(res.status).toBe(404);
+  });
+
+  it("should respond to /s/:token/health checks", async () => {
+    const { app } = await setupApp();
+
+    const health = await dispatchRequest(app, { url: "/s/any-token/health" });
+    expect(health.status).toBe(200);
+    expect(health.body.status).toBe("ok");
+  });
 });

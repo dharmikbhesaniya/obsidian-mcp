@@ -54,7 +54,7 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "dotenv": "^18.0.9",
+    "dotenv": "^18.0.10",
     "express": "^4.21.2",
     "zod": "^3.25.76"
   },
